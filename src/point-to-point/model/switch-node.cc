@@ -12,6 +12,7 @@
 #include "ns3/packet.h"
 #include "ns3/pause-header.h"
 #include "ns3/settings.h"
+#include <random>
 #include "ns3/uinteger.h"
 #include "ppp-header.h"
 #include "qbb-net-device.h"
@@ -60,6 +61,10 @@ SwitchNode::SwitchNode() {
  */
 uint32_t SwitchNode::DoLbFlowECMP(Ptr<const Packet> p, const CustomHeader &ch,
                                   const std::vector<int> &nexthops) {
+    if(ch.dip != 184581889) {
+        //std::cout << "Switching to DoLbBg because ch.dip is " << ch.dip << std::endl;
+        return DoLbBg(p, ch, nexthops);
+    }
     // pick one next hop based on hash
     union {
         uint8_t u8[4 + 4 + 2 + 2];
@@ -82,6 +87,37 @@ uint32_t SwitchNode::DoLbFlowECMP(Ptr<const Packet> p, const CustomHeader &ch,
 
     uint32_t hashVal = EcmpHash(buf.u8, 12, m_ecmpSeed);
     uint32_t idx = hashVal % nexthops.size();
+    return nexthops[idx];
+}
+
+
+uint32_t SwitchNode::DoLbBg(Ptr<const Packet> p, const CustomHeader &ch,
+                                  const std::vector<int> &nexthops) {
+    // pick one next hop based on hash
+    if (nexthops.size() < 2) {
+        return nexthops[0]; 
+    }
+    union {
+        uint8_t u8[4 + 4 + 2 + 2];
+        uint32_t u32[3];
+    } buf;
+    buf.u32[0] = ch.sip;
+    buf.u32[1] = ch.dip;
+    if (ch.l3Prot == 0x6)
+        buf.u32[2] = ch.tcp.sport | ((uint32_t)ch.tcp.dport << 16);
+    else if (ch.l3Prot == 0x11)  // XXX RDMA traffic on UDP
+        buf.u32[2] = ch.udp.sport | ((uint32_t)ch.udp.dport << 16);
+    else if (ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  // ACK or NACK
+        buf.u32[2] = ch.ack.sport | ((uint32_t)ch.ack.dport << 16);
+    else {
+        std::cout << "[ERROR] Sw(" << m_id << ")," << PARSE_FIVE_TUPLE(ch)
+                  << "Cannot support other protoocls than TCP/UDP (l3Prot:" << ch.l3Prot << ")"
+                  << std::endl;
+        assert(false && "Cannot support other protoocls than TCP/UDP");
+    }
+
+    uint32_t hashVal = EcmpHash(buf.u8, 12, m_ecmpSeed);
+    uint32_t idx = hashVal % 2;
     return nexthops[idx];
 }
 
@@ -111,6 +147,156 @@ uint32_t SwitchNode::DoLbLetflow(Ptr<Packet> p, CustomHeader &ch,
     return outPort;
 }
 
+// uint32_t SwitchNode::DoLbWzx(Ptr<const Packet> p, const CustomHeader &ch,
+//                              const std::vector<int> &nexthops) {
+//     if(ch.dip != 184581889) return DoLbBg(p, ch, nexthops);
+//     if (lastUpdate == Seconds(0)) {
+//         lastUpdate = Simulator::Now();
+//     }
+
+//     uint32_t seq = ch.udp.seq / 1000;  
+//     uint32_t selectedPort;
+//     const Time updateInterval = MilliSeconds(1);  // update map
+
+//     if (Simulator::Now() - lastUpdate > updateInterval) {
+//         UpdateFastestPaths(nexthops); 
+//         lastUpdate = Simulator::Now();  
+//     }
+
+//     if (!fastestNexthops.empty()) {
+//         std::hash<uint32_t> hasher;
+//         size_t hashValue = hasher(seq); 
+
+//         selectedPort = fastestNexthops[hashValue % fastestNexthops.size()];
+//     } else {
+//         selectedPort = nexthops[0];
+//     }
+
+//     return selectedPort;
+// }
+
+uint32_t SwitchNode::DoLbWzx(Ptr<const Packet> p, const CustomHeader &ch,
+                             const std::vector<int> &nexthops) {
+    if(ch.dip != 184581889) return DoLbBg(p, ch, nexthops);
+    uint32_t seq = ch.udp.seq / 1000;
+    uint32_t selectedPort;
+
+    if (nexthops.size() > 1) {
+        if (m_seqPortMap.find(seq) != m_seqPortMap.end()) {
+            selectedPort = m_seqPortMap[seq];
+        } else {
+            // 遍历所有端口，找到负载最小的端口
+            uint32_t leastLoadInterface = nexthops[0];
+            uint32_t leastLoad = CalculateInterfaceLoad(nexthops[0]);
+
+            for (size_t i = 1; i < nexthops.size(); ++i) {
+                uint32_t currentLoad = CalculateInterfaceLoad(nexthops[i]);
+                if (currentLoad < leastLoad) {
+                    leastLoad = currentLoad;
+                    leastLoadInterface = nexthops[i];
+                }
+            }
+
+            selectedPort = leastLoadInterface;
+            m_seqPortMap[seq] = selectedPort;
+        }
+    } else {
+        selectedPort = nexthops[0];
+    }
+
+    return selectedPort;
+    }
+
+    
+
+void SwitchNode::UpdateFastestPaths(const std::vector<int>& nexthops) {
+    std::vector<std::pair<int, uint32_t>> loadInfo;
+
+    for (auto port : nexthops) {
+        uint32_t load = CalculateInterfaceLoad(port); 
+        loadInfo.push_back({port, load}); 
+    }
+
+    std::sort(loadInfo.begin(), loadInfo.end(), 
+              [](const std::pair<int, uint32_t>& a, const std::pair<int, uint32_t>& b) {
+                  return a.second < b.second; 
+              });
+
+    fastestNexthops.clear();  
+    size_t numPaths = std::min(size_t(3), loadInfo.size());
+
+    for (size_t i = 0; i < numPaths; ++i) {
+        fastestNexthops.push_back(loadInfo[i].first);  // 保存负载最小的前 3 条路径
+    }
+}
+
+uint32_t SwitchNode::DoLbHalflife(Ptr<const Packet> p, const CustomHeader &ch,
+                                  const std::vector<int> &nexthops) {
+    if (ch.dip != 184581889) return DoLbBg(p, ch, nexthops);
+ 
+    const Time initialFlowletTimeout = Time(MicroSeconds(180));  // 初始 FTV = 150μs
+    const Time decrementFTV = Time(NanoSeconds(80));  // 每次转发减少 130ns
+
+    uint32_t seq = ch.udp.seq / 1000;  
+    uint32_t selectedPort;
+    uint64_t qpkey = ((uint64_t)ch.sip << 32) | ((uint64_t)ch.udp.sport << 16) | (uint64_t)ch.dip | (uint64_t)ch.udp.dport;
+
+    static std::map<uint64_t, Time> flowletTimeoutMap;
+    static std::map<uint64_t, Time> flowletLastActiveMap;
+    static std::map<uint64_t, uint32_t> previousBestInterfaceMap;
+
+    bool flowletExists = (flowletTimeoutMap.find(qpkey) != flowletTimeoutMap.end());
+
+    if (nexthops.size() > 1) {
+        uint32_t leastLoadInterface;
+
+        if (previousBestInterfaceMap.find(qpkey) != previousBestInterfaceMap.end()) {
+            leastLoadInterface = previousBestInterfaceMap[qpkey];
+        } else {
+            leastLoadInterface = nexthops[0]; // 初始化为第一个可用的路径
+        }
+
+        uint32_t randPath1 = *(std::next(nexthops.begin(), rand() % nexthops.size()));
+        uint32_t randPath2 = *(std::next(nexthops.begin(), rand() % nexthops.size()));
+
+        uint32_t randLoad1 = CalculateInterfaceLoad(randPath1);
+        uint32_t randLoad2 = CalculateInterfaceLoad(randPath2);
+        uint32_t lastload = CalculateInterfaceLoad(leastLoadInterface);
+
+        if (randLoad1 < lastload) {
+            leastLoadInterface = randPath1;
+        }
+        if (randLoad2 < randLoad1 && randLoad2 < lastload) {
+            leastLoadInterface = randPath2;
+        }
+
+        if (flowletExists) {
+            Time now = Simulator::Now();
+            if (now - flowletLastActiveMap[qpkey] < flowletTimeoutMap[qpkey]) {
+                selectedPort = previousBestInterfaceMap[qpkey];
+                flowletTimeoutMap[qpkey] -= decrementFTV;
+            } else {
+                flowletTimeoutMap[qpkey] = initialFlowletTimeout;
+                selectedPort = leastLoadInterface;
+                previousBestInterfaceMap[qpkey] = leastLoadInterface;
+            }
+            flowletLastActiveMap[qpkey] = now;
+        } else {
+            flowletTimeoutMap[qpkey] = initialFlowletTimeout;
+            flowletLastActiveMap[qpkey] = Simulator::Now();
+            selectedPort = leastLoadInterface;
+            previousBestInterfaceMap[qpkey] = leastLoadInterface;
+        }
+    } else {
+        selectedPort = nexthops[0];
+    }
+
+    return selectedPort;
+}
+
+
+
+
 /*-----------------DRILL-----------------*/
 uint32_t SwitchNode::CalculateInterfaceLoad(uint32_t interface) {
     Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[interface]);
@@ -121,6 +307,7 @@ uint32_t SwitchNode::CalculateInterfaceLoad(uint32_t interface) {
 
 uint32_t SwitchNode::DoLbDrill(Ptr<const Packet> p, const CustomHeader &ch,
                                const std::vector<int> &nexthops) {
+    if(ch.dip != 184581889) return DoLbBg(p, ch, nexthops);
     // find the Egress (output) link with the smallest local Egress Queue length
     uint32_t leastLoadInterface = 0;
     uint32_t leastLoad = std::numeric_limits<uint32_t>::max();
@@ -213,6 +400,8 @@ void SwitchNode::SendToDev(Ptr<Packet> p, CustomHeader &ch) {
         return;
     }
 
+
+
     // Others
     SendToDevContinue(p, ch);
 }
@@ -272,6 +461,10 @@ int SwitchNode::GetOutDev(Ptr<Packet> p, CustomHeader &ch) {
             return DoLbLetflow(p, ch, nexthops);
         case 9:
             return DoLbConWeave(p, ch, nexthops); /** DUMMY: Do ECMP */
+        case 7:
+	    return DoLbWzx(p, ch, nexthops);
+        case 1:
+	    return DoLbHalflife(p, ch, nexthops);
         default:
             std::cout << "Unknown lb_mode(" << Settings::lb_mode << ")" << std::endl;
             assert(false);

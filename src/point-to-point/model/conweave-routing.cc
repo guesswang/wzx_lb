@@ -176,7 +176,7 @@ ConWeaveRouting::ConWeaveRouting() {
     // set constants
     m_extraReplyDeadline = MicroSeconds(4);       // 1 hop of 50KB / 100Gbps = 4us
     m_extraVOQFlushTime = MicroSeconds(8);        // for uncertainty
-    m_txExpiryTime = MicroSeconds(300);           // flowlet timegap
+    m_txExpiryTime = MicroSeconds(10000);           // flowlet timegap
     m_defaultVOQWaitingTime = MicroSeconds(200);  // 200us
     m_pathPauseTime = MicroSeconds(8);            // 100KB queue, 100Gbps -> 8us
     m_pathAwareRerouting = true;                  // enable path-aware rerouting
@@ -384,8 +384,8 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
         return;
     }
     assert(srcToRId != dstToRId);  // Should not be in the same pod
-
-    if (ch.l3Prot != 0x11 && ch.l3Prot != 0xFD) {
+ 
+    if (ch.l3Prot != 0x11 && ch.l3Prot != 0xFD) {//如果是某些控制包或非路由数据包，直接调用 DoSwitchSendToDev 将数据包发送出去
         SLB_LOG(PARSE_FIVE_TUPLE(ch) << "ACK/PFC or other control pkts -> do flow-ECMP. Sw("
                                      << m_switch_id << "),l3Prot:" << ch.l3Prot);
         DoSwitchSendToDev(p, ch);
@@ -437,7 +437,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
     }
 
     /**------------------------  Start processing SLB packets  ------------------------*/
-    if (m_isToR) {  // ToR switch
+    if (m_isToR) {  // ToR switch 源ToR会初始化流信息、检查流片超时或稳定性、选择合适的路径。
         /***************************
          *    Source ToR Switch    *
          ***************************/
@@ -448,7 +448,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
                                              // should not be found at TxToR
 
             /** PIPELINE: emulating the p4 pipelining */
-            conweaveTxMeta tx_md;  // SrcToR packet metadata
+            conweaveTxMeta tx_md;  // SrcToR packet metadata源ToR包的元数据
             tx_md.pkt_flowkey = GetFlowKey(ch.sip, ch.dip, ch.udp.sport, ch.udp.dport);
             auto &txEntry = m_conweaveTxTable[tx_md.pkt_flowkey];
 
@@ -463,7 +463,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
             /**
              * CHECK: Expiry or Stability
              */
-            if (txEntry._activeTime + m_txExpiryTime < now) { /* expired */
+            if (txEntry._activeTime + m_txExpiryTime < now) { /* expired 判断流是否过期.超时的流需要重新设置路径*/
                 tx_md.flagExpired = true;
                 txEntry._stabilized = false;
             } else if (txEntry._stabilized == true) { /* stabilized */
@@ -498,7 +498,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
 
             /**
              * ROUND: if expiry or stabilized, increase epoch by 1
-             */
+             过期或稳定的流片会增加阶段（epoch），并设置为阶段0。应答超时的流片会切换到阶段1。*/
             if (tx_md.flagExpired || tx_md.flagStabilized) { /* expired or stabilized */
                 txEntry._epoch += 1;
                 tx_md.epoch = txEntry._epoch; /* increase and get */
@@ -529,7 +529,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
                             rand() % pathSet.size()));  // to initialize (empty: CW_DEFAULT_32BIT)
 
             if (m_pathAwareRerouting) {
-                /* path-aware decision */
+                /* path-aware decision 路径感知重路由*/
                 uint32_t randPath1 = *(std::next(pathSet.begin(), rand() % pathSet.size()));
                 uint32_t randPath2 = *(std::next(pathSet.begin(), rand() % pathSet.size()));
                 const auto pathEntry1 =
@@ -550,7 +550,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
                     goodPath2 = false;
                 }
 
-                if (goodPath1 == true) {
+                if (goodPath1 == true) {//从两个随机选择的路径中进行比较择优
                     tx_md.foundGoodPath = true;
                     tx_md.goodPath = randPath1;
                     // SLB_LOG(PARSE_FIVE_TUPLE(ch) << "--> First trial has good path");
@@ -640,6 +640,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
             DoSwitchSend(p, ch, outDev, qIndex);
             return;
         }
+        //如果是目的ToR，则处理有关乱序、尾部包的逻辑，包括重排序和虚拟输出队列（VOQ）的管理。
         /***************************
          *  Destination ToR Switch *
          ***************************/
@@ -649,10 +650,10 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
                 /** PIPELINE: emulating the p4 pipelining */
                 conweaveRxMeta rx_md;
                 rx_md.pkt_flowkey = GetFlowKey(ch.sip, ch.dip, ch.udp.sport, ch.udp.dport);
-                auto &rxEntry = m_conweaveRxTable[rx_md.pkt_flowkey];
+                auto &rxEntry = m_conweaveRxTable[rx_md.pkt_flowkey];//追踪接收到的数据包流
 
                 /** INIT: setup flowkey */
-                if (rxEntry._flowkey == 0) {
+                if (rxEntry._flowkey == 0) {//新流，需要初始化流相关信息
                     rxEntry._flowkey = rx_md.pkt_flowkey;
                     assert(rxEntry._epoch == 1);  // sanity check
                     rx_md.newConnection = true;
@@ -677,7 +678,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
                 /**
                  * ROUND: check epoch: 2(prev), 0(current), or 1(new)
                  */
-                if (rxEntry._epoch < rx_md.pkt_epoch) { /* new epoch */
+                if (rxEntry._epoch < rx_md.pkt_epoch) { /* new epoch 属于新阶段（epoch），更新流片的阶段，并检查是否出现乱序的情况。
                     rxEntry._epoch = rx_md.pkt_epoch;   /* update to new epoch  */
                     rx_md.resultEpochMatch = 1;
                 } else if (rxEntry._epoch > rx_md.pkt_epoch) { /* prev epoch */
@@ -724,13 +725,13 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
                      */
                     auto voq = m_voqMap.find(rx_md.pkt_flowkey);
                     if (rxEntry._reordering || voq != m_voqMap.end()) {
-                        std::cout
-                            << __FILE__ << "(" << __LINE__ << "):" << Simulator::Now() << ","
-                            << PARSE_FIVE_TUPLE(ch)
-                            << " New epoch packet arrives, but reordering is in progress."
-                            << " Maybe TxToR made the epoch progress too aggressively."
-                            << " If this is frequent, try to increase `cwh_txExpiryTime` value."
-                            << std::endl;
+                        // std::cout
+                        //     << __FILE__ << "(" << __LINE__ << "):" << Simulator::Now() << ","
+                        //     << PARSE_FIVE_TUPLE(ch)
+                        //     << " New epoch packet arrives, but reordering is in progress."
+                        //     << " Maybe TxToR made the epoch progress too aggressively."
+                        //     << " If this is frequent, try to increase `cwh_txExpiryTime` value."
+                        //     << std::endl;
 
                         if (rxEntry._reordering != (voq != m_voqMap.end())) {
                             std::cout
@@ -863,18 +864,22 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
                                 << ",Phase0 Rx:" << rx_md.phase0RxTime << ")");
                     }
                 } else {                          /* phase 1 */
-                    if (rx_md.flagOutOfOrder) {   /* out-of-order */
+                    if (rx_md.flagOutOfOrder) {   /* out-of-order 缓存到VOQ中进行重排序*/
                         rx_md.flagEnqueue = true; /* enqueue */
 
-                        if (rxEntry._reordering) { /* reordering is on-going */
+                        if (rxEntry._reordering) { /* reordering is on-going 已经存在乱序*/
                             auto voq = m_voqMap.find(rx_md.pkt_flowkey);
                             assert(voq != m_voqMap.end());  // sanity check
+                                    // 在此处添加 VOQ 大小限制检查
+                            // if (voq->second.getQueueSize() >= MAX_VOQ_SIZE) {
+                            //     voq->second.DropOldest();
+                            // }
                             SLB_LOG(PARSE_FIVE_TUPLE(ch)
                                     << "--> SUBSEQ OoO"
                                     << ",VOQ size:" << voq->second.getQueueSize() + 1
                                     << ",No New Deadline Update");
 
-                        } else { /* new out-of-order */
+                        } else { /* new out-of-order 新的乱序*/
                             rxEntry._reordering = true;
                             ConWeaveVOQ &voq = m_voqMap[rx_md.pkt_flowkey];
 
@@ -908,12 +913,12 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
                  */
                 if (m_pathAwareRerouting) {
                     if (rx_md.pkt_ecnbits == 0x03) {
-                        SendNotify(p, ch, rx_md.pkt_pathId);
+                        SendNotify(p, ch, rx_md.pkt_pathId);//如果数据包的ECN标志表明拥塞，则发送通知包告知源ToR存在拥塞路径。
                     }
                 }
 
                 /**
-                 * REPLY: send reply if requested
+                 * REPLY: send reply if requested根据数据包的标志（如INIT或TAIL），发送应答包（SendReply），确认数据的接收状态。
                  */
                 if (rx_md.pkt_flagData == ConWeaveDataTag::INIT) {
                     assert(rx_md.pkt_phase == 0);  // sanity check
@@ -1028,6 +1033,7 @@ void ConWeaveRouting::RouteInput(Ptr<Packet> p, CustomHeader &ch) {
         assert(false);
     }
 
+    //非ToR交换机:直接提取包头里的conweavedatatag路径ID转发.跳数+1。
     /******************************
      *  Non-ToR Switch (Core/Agg) *
      ******************************/

@@ -71,7 +71,7 @@ Time letflow_agingTime = MilliSeconds(2);  // just to clear the unused map entri
 // Conweave params
 Time conweave_extraReplyDeadline = MicroSeconds(4);       // additional term to reply deadline
 Time conweave_pathPauseTime = MicroSeconds(8);            // time to send packets to congested path
-Time conweave_txExpiryTime = MicroSeconds(1000);          // waiting time for CLEAR
+Time conweave_txExpiryTime = MicroSeconds(100000);          // waiting time for CLEAR
 Time conweave_extraVOQFlushTime = MicroSeconds(32);       // extra for uncertainty
 Time conweave_defaultVOQWaitingTime = MicroSeconds(500);  // default flush timer if no history
 bool conweave_pathAwareRerouting = true;
@@ -328,11 +328,13 @@ void periodic_monitoring(FILE *fout_voq, FILE *fout_voq_detail, FILE *fout_uplin
 
         if (lb_mode_val == 9) {  // Conweave
             // monitor VOQ number per switch <time, ToRId, #VOQ, #Pkts>
+            //<当前时间>, <ToR ID>, <VOQ 数量>, <VOQ 中的总数据包数量>
             uint32_t nVOQ = swNode->m_mmu->m_conweaveRouting.GetNumVOQ();
             uint32_t nVolumeVOQ = swNode->m_mmu->m_conweaveRouting.GetVolumeVOQ();
             fprintf(fout_voq, "%lu,%u,%u,%u\n", now, tor2If.first, nVOQ, nVolumeVOQ);
 
             // monitor VOQ per destination IP <time, dstip, #VOQ, #Pkts>
+            //<当前时间>, <目的IP地址>, <VOQ 数量>, <VOQ 中的数据包数量>
             std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> dip_to_nvoq_npkt;
             for (auto voq : swNode->m_mmu->m_conweaveRouting.GetVOQMap()) {
                 auto &nvoq_npkt = dip_to_nvoq_npkt[voq.second.getDIP()];

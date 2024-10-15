@@ -373,7 +373,7 @@ class ConWeaveRouting : public Object {
     std::map<uint64_t, conweaveRxState> m_conweaveRxTable;  // flowkey -> RxToR's stateful table
 
     // VOQ (voq.m_deleteCallback = MakeCallback(&ConWeaveRouting::deleteVoq, this); )
-    std::unordered_map<uint64_t, ConWeaveVOQ> m_voqMap;  // flowkey -> FIFO Queue
+    std::unordered_map<uint64_t, ConWeaveVOQ> m_voqMap;  // flowkey -> FIFO Queue每个键值对表示一个流对应的 VOQ
 
     static uint64_t debug_time;
 };

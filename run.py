@@ -84,6 +84,7 @@ USE_DYNAMIC_PFC_THRESHOLD 1
 PACKET_PAYLOAD_SIZE 1000
 
 
+
 LINK_DOWN 0 0 0
 KMAX_MAP {kmax_map}
 KMIN_MAP {kmin_map}
@@ -92,7 +93,7 @@ LOAD {load}
 RANDOM_SEED 1
 """
 
-
+# 每个数据包的有效负载大小为 1000 字节
 # LB/CC mode matching
 cc_modes = {
     "dcqcn": 1,
@@ -102,11 +103,13 @@ cc_modes = {
 }
 
 lb_modes = {
-    "fecmp": 0,
+    "ecmp": 0,
     "drill": 2,
     "conga": 3,
     "letflow": 6,
     "conweave": 9,
+    "wzx":7,
+    "halflife":1,
 }
 
 topo2bdp = {
@@ -128,13 +131,13 @@ def main():
     parser.add_argument('--cc', dest='cc', action='store',
                         default='dcqcn', help="hpcc/dcqcn/timely/dctcp (default: dcqcn)")
     parser.add_argument('--lb', dest='lb', action='store',
-                        default='fecmp', help="fecmp/pecmp/drill/conga (default: fecmp)")
+                        default='ecmp', help="ecmp/pecmp/drill/conga (default: ecmp)")
     parser.add_argument('--pfc', dest='pfc', action='store',
                         type=int, default=1, help="enable PFC (default: 1)")
     parser.add_argument('--irn', dest='irn', action='store',
                         type=int, default=0, help="enable IRN (default: 0)")
     parser.add_argument('--simul_time', dest='simul_time', action='store',
-                        default='0.1', help="traffic time to simulate (up to 3 seconds) (default: 0.1)")
+                        default='2', help="traffic time to simulate (up to 3 seconds) (default: 0.1)")
     parser.add_argument('--buffer', dest="buffer", action='store',
                         default='9', help="the switch buffer size (MB) (default: 9)")
     parser.add_argument('--netload', dest='netload', action='store', type=int,
@@ -142,13 +145,13 @@ def main():
     parser.add_argument('--bw', dest="bw", action='store',
                         default='100', help="the NIC bandwidth (Gbps) (default: 100)")
     parser.add_argument('--topo', dest='topo', action='store',
-                        default='leaf_spine_128_100G', help="the name of the topology file (default: leaf_spine_128_100G_OS2)")
+                        default='leaf_spine_128_100G_OS2', help="the name of the topology file (default: leaf_spine_128_100G_OS2)")
     parser.add_argument('--cdf', dest='cdf', action='store',
                         default='AliStorage2019', help="the name of the cdf file (default: AliStorage2019)")
     parser.add_argument('--enforce_win', dest='enforce_win', action='store',
                         type=int, default=0, help="enforce to use window scheme (default: 0)")
     parser.add_argument('--sw_monitoring_interval', dest='sw_monitoring_interval', action='store',
-                        type=int, default=10000, help="interval of sampling statistics for queue status (default: 10000ns)")
+                        type=int, default=30000, help="interval of sampling statistics for queue status (default: 10000ns)")
 
     # #### CONWEAVE PARAMETERS ####
     # parser.add_argument('--cwh_extra_reply_deadline', dest='cwh_extra_reply_deadline', action='store',
@@ -166,11 +169,16 @@ def main():
 
     # make running ID of this config
     # need to check directory exists or not
+    """
     isExist = True
+    
     config_ID = 0
     while (isExist):
         config_ID = str(random.randrange(MAX_RAND_RANGE))
-        isExist = os.path.exists(os.getcwd() + "/mix/output/" + config_ID)
+    """
+    config_ID = str(args.lb)
+    isExist = os.path.exists(os.getcwd() + "/mix/output/" + config_ID)
+    
 
     # input parameters
     cc_mode = cc_modes[args.cc]
@@ -212,7 +220,7 @@ def main():
     with open("config/{topo}.txt".format(topo=args.topo), 'r') as f_topo:
         line = f_topo.readline().split(" ")
         n_host = int(line[0]) - int(line[1])
-
+    """
     assert (hostload >= 0 and hostload < 100)
     flow = "L_{load:.2f}_CDF_{cdf}_N_{n_host}_T_{time}ms_B_{bw}_flow".format(
         load=hostload, cdf=args.cdf, n_host=n_host, time=int(float(args.simul_time)*1000), bw=bw)
@@ -238,7 +246,8 @@ def main():
             bw=args.bw + "G",
             time=args.simul_time,
             output=os.getcwd() + "/config/" + flow + ".txt"))
-
+    """
+    flow = "wzxflowfile"
     # sanity check - bandwidth
     with open("config/{topo}.txt".format(topo=args.topo), 'r') as f_topo:
         first_line = f_topo.readline().split(" ")
@@ -287,12 +296,18 @@ def main():
     ##################################################################
 
     # make directory if not exists
-    isExist = os.path.exists(os.getcwd() + "/mix/output/" + config_ID + "/")
-    assert (not isExist)
+    #isExist = os.path.exists(os.getcwd() + "/mix/output/" + config_ID + "/")
+    #assert (not isExist)
     # if not isExist:
-    os.makedirs(os.getcwd() + "/mix/output/" + config_ID + "/")
-    print("The new directory is created  - {}".format(os.getcwd() +
-          "/mix/output/" + config_ID + "/"))
+    dir_path = os.path.join(os.getcwd(), "mix/output", config_ID)
+    if os.path.exists(dir_path):
+        print(f"Directory already exists, deleting and recreating: {dir_path}")
+    # 删除目录及其内容
+        shutil.rmtree(dir_path)
+
+# 重新创建目录
+    os.makedirs(dir_path)
+    print("The new directory is created - {}".format(dir_path))
 
     config_name = os.getcwd() + "/mix/output/" + config_ID + "/config.txt"
     print("Config filename:{}".format(config_name))
@@ -339,11 +354,11 @@ def main():
 
     # DCQCN parameters (NOTE: HPCC's 400KB/1600KB is too large, although used in Microsoft)
     kmax_map = "6 %d %d %d %d %d %d %d %d %d %d %d %d" % (
-        bw*200000000, 400, bw*500000000, 400, bw*1000000000, 400, bw*2*1000000000, 400, bw*2500000000, 400, bw*4*1000000000, 400)
+        bw*10000000, 400, bw*100000000, 400, bw*1000000000, 400, bw*2*1000000000, 400, bw*2500000000, 400, bw*4*1000000000, 400)
     kmin_map = "6 %d %d %d %d %d %d %d %d %d %d %d %d" % (
-        bw*200000000, 100, bw*500000000, 100, bw*1000000000, 100, bw*2*1000000000, 100, bw*2500000000, 100, bw*4*1000000000, 100)
+        bw*10000000, 100, bw*100000000, 100, bw*1000000000, 100, bw*2*1000000000, 100, bw*2500000000, 100, bw*4*1000000000, 100)
     pmax_map = "6 %d %d %d %d %d %.2f %d %.2f %d %.2f %d %.2f" % (
-        bw*200000000, 0.2, bw*500000000, 0.2, bw*1000000000, 0.2, bw*2*1000000000, 0.2, bw*2500000000, 0.2, bw*4*1000000000, 0.2)
+        bw*10000000, 0.2, bw*100000000, 0.2, bw*1000000000, 0.2, bw*2*1000000000, 0.2, bw*2500000000, 0.2, bw*4*1000000000, 0.2)
 
     # queue monitoring
     qlen_mon_start = flowgen_start_time

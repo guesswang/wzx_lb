@@ -80,7 +80,7 @@ class LetflowRouting : public Object {
 
     /* static */
     static TypeId GetTypeId(void);
-    static uint64_t GetQpKey(uint32_t dip, uint16_t sport, uint16_t dport, uint16_t pg);              // same as in rdma_hw.cc
+    static uint64_t GetQpKey(uint32_t dip, uint16_t sport, uint16_t dport, uint32_t sip);              // same as in rdma_hw.cc
     static uint32_t GetOutPortFromPath(const uint32_t& path, const uint32_t& hopCount);               // decode outPort from path, given a hop's order
     static void SetOutPortToPath(uint32_t& path, const uint32_t& hopCount, const uint32_t& outPort);  // encode outPort to path
     static uint32_t nFlowletTimeout;                                                                  // number of flowlet's timeout

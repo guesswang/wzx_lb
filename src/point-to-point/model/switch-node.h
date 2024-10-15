@@ -43,6 +43,8 @@ class SwitchNode : public Node {
     // Flow ECMP (lb_mode = 0)
     uint32_t DoLbFlowECMP(Ptr<const Packet> p, const CustomHeader &ch,
                           const std::vector<int> &nexthops);
+    uint32_t DoLbBg(Ptr<const Packet> p, const CustomHeader &ch,
+                          const std::vector<int> &nexthops);
     // DRILL (lb_mode = 2)
     uint32_t DoLbDrill(Ptr<const Packet> p, const CustomHeader &ch,
                        const std::vector<int> &nexthops);     // choose egress port
@@ -56,6 +58,9 @@ class SwitchNode : public Node {
     // ConWeave (lb_mode = 9)
     uint32_t DoLbConWeave(Ptr<const Packet> p, const CustomHeader &ch,
                            const std::vector<int> &nexthops);  // dummy
+    uint32_t DoLbWzx(Ptr<const Packet> p, const CustomHeader &ch, const std::vector<int> &nexthops);
+    uint32_t DoLbHalflife(Ptr<const Packet> p, const CustomHeader &ch,
+                                  const std::vector<int> &nexthops);
 
    public:
     // Ptr<BroadcomNode> m_broadcom;
@@ -65,6 +70,10 @@ class SwitchNode : public Node {
 
     static TypeId GetTypeId(void);
     SwitchNode();
+    Time lastUpdate; // 用于记录上次更新最快路径的时间
+    std::vector<int> fastestNexthops; // 保存当前最快的三条路径
+    std::map<uint32_t, uint32_t> m_seqPortMap;
+    void UpdateFastestPaths(const std::vector<int>& nexthops);
     void SetEcmpSeed(uint32_t seed);
     void AddTableEntry(Ipv4Address &dstAddr, uint32_t intf_idx);
     void ClearTable();
