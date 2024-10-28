@@ -1,5 +1,3 @@
-#include "rdma-hw.h"
-
 #include <ns3/ipv4-header.h>
 #include <ns3/seq-ts-header.h>
 #include <ns3/simulator.h>
@@ -20,6 +18,8 @@
 #include "ns3/uinteger.h"
 #include "ppp-header.h"
 #include "qbb-header.h"
+#include "rdma-hw.h"
+#include "rdma-queue-pair.h"
 
 namespace ns3 {
 
@@ -27,6 +27,9 @@ NS_LOG_COMPONENT_DEFINE("RdmaHw");
 
 std::unordered_map<unsigned, unsigned> acc_timeout_count;
 uint64_t RdmaHw::nAllPkts = 0;
+uint32_t completeCount = 0;
+uint32_t targetCount = 16;
+std::vector<AddQueuePairParameters> paramsList;
 
 TypeId RdmaHw::GetTypeId(void) {
     static TypeId tid =
@@ -180,17 +183,25 @@ Ptr<RdmaQueuePair> RdmaHw::GetQp(uint64_t key) {
 
     return NULL;
 }
-void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip,
-                          uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt,
-                          int32_t flow_id) {
+// void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip,
+//                           uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt,
+//                           int32_t flow_id) {
+void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip, 
+            uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt, double period, uint64_t round){
     // create qp
-    Ptr<RdmaQueuePair> qp = CreateObject<RdmaQueuePair>(pg, sip, dip, sport, dport);
-    qp->SetSize(size);
-    qp->SetWin(win);
-    qp->SetBaseRtt(baseRtt);
-    qp->SetVarWin(m_var_win);
-    qp->SetFlowId(flow_id);
-    qp->SetTimeout(m_waitAckTimeout);
+    // Ptr<RdmaQueuePair> qp = CreateObject<RdmaQueuePair>(pg, sip, dip, sport, dport);
+    // qp->SetSize(size);
+    // qp->SetWin(win);
+    // qp->SetBaseRtt(baseRtt);
+    // qp->SetVarWin(m_var_win);
+    // qp->SetFlowId(flow_id);
+    // qp->SetTimeout(m_waitAckTimeout);
+    Ptr<RdmaQueuePair> qp = CreateObject<RdmaQueuePair>(pg, sip, dip, sport, dport, period, round);
+	// std::cout<< " happy: " << period << " " << round << std::endl;
+	qp->SetSize(size);
+	qp->SetWin(win);
+	qp->SetBaseRtt(baseRtt);
+	qp->SetVarWin(m_var_win);
 
     if (m_irn) {
         qp->irn.m_enabled = m_irn;
@@ -222,6 +233,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
 
     // Notify Nic
     m_nic[nic_idx].dev->NewQp(qp);
+    std::cout << "new qp" << qp->sip << qp->snd_una <<std::endl;
 }
 
 void RdmaHw::DeleteQueuePair(Ptr<RdmaQueuePair> qp) {
@@ -261,10 +273,11 @@ Ptr<RdmaRxQueuePair> RdmaHw::GetRxQp(uint32_t sip, uint32_t dip, uint16_t sport,
         q->sport = sport;
         q->dport = dport;
         q->m_ecn_source.qIndex = pg;
-        q->m_flow_id = -1;     // unknown
+        //q->m_flow_id = -1;     // unknown
         m_rxQpMap[rxKey] = q;  // store in map
         return q;
     }
+
     return NULL;
 }
 uint32_t RdmaHw::GetNicIdxOfRxQp(Ptr<RdmaRxQueuePair> q) {
@@ -327,9 +340,9 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
     bool cnp_check = false;
     int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size, cnp_check);
     if(ch.dip == 184581889) {
-    std::cout << "Host with source IP: " << ch.sip
-          << " received sequence number: " << ch.udp.seq
-          << " at time: " << Simulator::Now().GetNanoSeconds() << " ns." << std::endl;
+    // std::cout << "Host with source IP: " << ch.sip
+    //       << " received sequence number: " << ch.udp.seq
+    //       << " at time: " << Simulator::Now().GetNanoSeconds() << " ns." << std::endl;
     }
 
     if (x == 1 || x == 2 || x == 6) {  // generate ACK or NACK
@@ -513,6 +526,7 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
         }
         if (qp->IsFinished()) {
             QpComplete(qp);
+
         }
     }
 
@@ -602,119 +616,119 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch) {
  * 4: OoO, but skip to send NACK as it is already NACKed.
  * 6: NACK but functionality is ACK (indicating all packets are received)
  */
-// int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size, bool &cnp) {
-//     uint32_t expected = q->ReceiverNextExpectedSeq;
-//     if (seq == expected || (seq < expected && seq + size >= expected)) {
-//         if (m_irn) {
-//             if (q->m_milestone_rx < seq + size) q->m_milestone_rx = seq + size;
-//             q->ReceiverNextExpectedSeq += size - (expected - seq);
-//             {
-//                 uint32_t sack_seq, sack_len;
-//                 if (q->m_irn_sack_.peekFrontBlock(&sack_seq, &sack_len)) {
-//                     if (sack_seq <= q->ReceiverNextExpectedSeq)
-//                         q->ReceiverNextExpectedSeq +=
-//                             (sack_len - (q->ReceiverNextExpectedSeq - sack_seq));
-//                 }
-//             }
-//             size_t progress = q->m_irn_sack_.discardUpTo(q->ReceiverNextExpectedSeq);
-//             if (q->m_irn_sack_.IsEmpty()) {
-//                 return 6;  // This generates NACK, but actually functions as an ACK (indicates all
-//                            // packet has been received)
-//             } else {
-//                 // should we put nack timer here
-//                 return 2;  // Still in loss recovery mode of IRN
-//             }
-//             return 0;  // should not reach here
-//         }
-
-//         q->ReceiverNextExpectedSeq += size - (expected - seq);
-//         if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
-//             q->m_milestone_rx +=
-//                 m_ack_interval;  // if ack_interval is small (e.g., 1), condition is meaningless
-//             return 1;            // Generate ACK
-//         } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
-//             return 1;
-//         } else {
-//             return 5;
-//         }
-//     } else if (seq > expected) {
-//         // Generate NACK
-//         if (m_irn) {
-//             if (q->m_milestone_rx < seq + size) q->m_milestone_rx = seq + size;
-
-//             // if seq is already nacked, check for nacktimer
-//             if (q->m_irn_sack_.blockExists(seq, size) && Simulator::Now() < q->m_nackTimer) {
-//                 return 4;  // don't need to send nack yet
-//             }
-//             q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
-//             q->m_irn_sack_.sack(seq, size);  // set SACK
-//             NS_ASSERT(q->m_irn_sack_.discardUpTo(expected) ==
-//                       0);  // SACK blocks must be larger than expected
-//             cnp = true;    // XXX: out-of-order should accompany with CNP (?) TODO: Check on CX6
-//             return 2;      // generate SACK
-//         }
-//         if (Simulator::Now() >= q->m_nackTimer || q->m_lastNACK != expected) {  // new NACK
-//             q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
-//             q->m_lastNACK = expected;
-//             if (m_backto0) {
-//                 q->ReceiverNextExpectedSeq = q->ReceiverNextExpectedSeq / m_chunk * m_chunk;
-//             }
-//             cnp = true;  // XXX: out-of-order should accompany with CNP (?) TODO: Check on CX6
-//             return 2;
-//         } else {
-//             // skip to send NACK
-//             return 4;
-//         }
-//     } else {
-//         // Duplicate.
-//         if (m_irn) {
-//             // if (q->ReceiverNextExpectedSeq - 1 == q->m_milestone_rx) {
-//             // 	return 6; // This generates NACK, but actually functions as an ACK (indicates all
-//             // packet has been received)
-//             // }
-//             if (q->m_irn_sack_.IsEmpty()) {
-//                 return 6;  // This generates NACK, but actually functions as an ACK (indicates all
-//                            // packet has been received)
-//             } else {
-//                 // should we put nack timer here
-//                 return 2;  // Still in loss recovery mode of IRN
-//             }
-//         }
-//         // Duplicate.
-//         return 1;  // According to IB Spec C9-110
-//                    /**
-//                     * IB Spec C9-110
-//                     * A responder shall respond to all duplicate requests in PSN order;
-//                     * i.e. the request with the (logically) earliest PSN shall be executed first. If,
-//                     * while responding to a new or duplicate request, a duplicate request is received
-//                     * with a logically earlier PSN, the responder shall cease responding
-//                     * to the original request and shall begin responding to the duplicate request
-//                     * with the logically earlier PSN.
-//                     */
-//     }
-// }
-
 int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size, bool &cnp) {
-uint32_t expected = q->ReceiverNextExpectedSeq;
-// 处理按序和乱序包：都当作按序包处理，始终生成 ACK
-if (seq >= expected) {
-    // 更新接收端的下一个期望序列号
-    q->ReceiverNextExpectedSeq += size - (expected - seq);
+    uint32_t expected = q->ReceiverNextExpectedSeq;
+    if (seq == expected || (seq < expected && seq + size >= expected)) {
+        if (m_irn) {
+            if (q->m_milestone_rx < seq + size) q->m_milestone_rx = seq + size;
+            q->ReceiverNextExpectedSeq += size - (expected - seq);
+            {
+                uint32_t sack_seq, sack_len;
+                if (q->m_irn_sack_.peekFrontBlock(&sack_seq, &sack_len)) {
+                    if (sack_seq <= q->ReceiverNextExpectedSeq)
+                        q->ReceiverNextExpectedSeq +=
+                            (sack_len - (q->ReceiverNextExpectedSeq - sack_seq));
+                }
+            }
+            size_t progress = q->m_irn_sack_.discardUpTo(q->ReceiverNextExpectedSeq);
+            if (q->m_irn_sack_.IsEmpty()) {
+                return 6;  // This generates NACK, but actually functions as an ACK (indicates all
+                           // packet has been received)
+            } else {
+                // should we put nack timer here
+                return 2;  // Still in loss recovery mode of IRN
+            }
+            return 0;  // should not reach here
+        }
 
-    // 如果已经达到 ACK 里程碑，生成 ACK
-    if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
-        q->m_milestone_rx += m_ack_interval;
-        return 1;  // 生成 ACK
-    } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
-        return 1;  // 每达到一定块大小时，继续生成 ACK
+        q->ReceiverNextExpectedSeq += size - (expected - seq);
+        if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
+            q->m_milestone_rx +=
+                m_ack_interval;  // if ack_interval is small (e.g., 1), condition is meaningless
+            return 1;            // Generate ACK
+        } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
+            return 1;
+        } else {
+            return 5;
+        }
+    } else if (seq > expected) {
+        // Generate NACK
+        if (m_irn) {
+            if (q->m_milestone_rx < seq + size) q->m_milestone_rx = seq + size;
+
+            // if seq is already nacked, check for nacktimer
+            if (q->m_irn_sack_.blockExists(seq, size) && Simulator::Now() < q->m_nackTimer) {
+                return 4;  // don't need to send nack yet
+            }
+            q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
+            q->m_irn_sack_.sack(seq, size);  // set SACK
+            NS_ASSERT(q->m_irn_sack_.discardUpTo(expected) ==
+                      0);  // SACK blocks must be larger than expected
+            cnp = true;    // XXX: out-of-order should accompany with CNP (?) TODO: Check on CX6
+            return 2;      // generate SACK
+        }
+        if (Simulator::Now() >= q->m_nackTimer || q->m_lastNACK != expected) {  // new NACK
+            q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
+            q->m_lastNACK = expected;
+            if (m_backto0) {
+                q->ReceiverNextExpectedSeq = q->ReceiverNextExpectedSeq / m_chunk * m_chunk;
+            }
+            cnp = true;  // XXX: out-of-order should accompany with CNP (?) TODO: Check on CX6
+            return 2;
+        } else {
+            // skip to send NACK
+            return 4;
+        }
     } else {
-        return 5;  // 处理特殊情况但不生成 NACK
+        // Duplicate.
+        if (m_irn) {
+            // if (q->ReceiverNextExpectedSeq - 1 == q->m_milestone_rx) {
+            // 	return 6; // This generates NACK, but actually functions as an ACK (indicates all
+            // packet has been received)
+            // }
+            if (q->m_irn_sack_.IsEmpty()) {
+                return 6;  // This generates NACK, but actually functions as an ACK (indicates all
+                           // packet has been received)
+            } else {
+                // should we put nack timer here
+                return 2;  // Still in loss recovery mode of IRN
+            }
+        }
+        // Duplicate.
+        return 1;  // According to IB Spec C9-110
+                   /**
+                    * IB Spec C9-110
+                    * A responder shall respond to all duplicate requests in PSN order;
+                    * i.e. the request with the (logically) earliest PSN shall be executed first. If,
+                    * while responding to a new or duplicate request, a duplicate request is received
+                    * with a logically earlier PSN, the responder shall cease responding
+                    * to the original request and shall begin responding to the duplicate request
+                    * with the logically earlier PSN.
+                    */
     }
-} else {
-    // 处理重复包：即使是重复包，也生成 ACK
-    return 1;  // 生成 ACK
-	}
 }
+
+// int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size, bool &cnp) {
+// uint32_t expected = q->ReceiverNextExpectedSeq;
+// // 处理按序和乱序包：都当作按序包处理，始终生成 ACK
+// if (seq >= expected) {
+//     // 更新接收端的下一个期望序列号
+//     q->ReceiverNextExpectedSeq += size - (expected - seq);
+
+//     // 如果已经达到 ACK 里程碑，生成 ACK
+//     if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
+//         q->m_milestone_rx += m_ack_interval;
+//         return 1;  // 生成 ACK
+//     } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
+//         return 1;  // 每达到一定块大小时，继续生成 ACK
+//     } else {
+//         return 5;  // 处理特殊情况但不生成 NACK
+//     }
+// } else {
+//     // 处理重复包：即使是重复包，也生成 ACK
+//     return 1;  // 生成 ACK
+// 	}
+// }
 
 void RdmaHw::AddHeader(Ptr<Packet> p, uint16_t protocolNumber) {
     PppHeader ppp;
@@ -737,18 +751,55 @@ uint16_t RdmaHw::EtherToPpp(uint16_t proto) {
 void RdmaHw::RecoverQueue(Ptr<RdmaQueuePair> qp) { qp->snd_nxt = qp->snd_una; }
 
 void RdmaHw::QpComplete(Ptr<RdmaQueuePair> qp) {
-    NS_ASSERT(!m_qpCompleteCallback.IsNull());
+        NS_ASSERT(!m_qpCompleteCallback.IsNull());
     if (m_cc_mode == 1) {
         Simulator::Cancel(qp->mlx.m_eventUpdateAlpha);
         Simulator::Cancel(qp->mlx.m_eventDecreaseRate);
         Simulator::Cancel(qp->mlx.m_rpTimer);
     }
     if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
-
     // This callback will log info. It also calls deletetion the rxQp on the receiver
     m_qpCompleteCallback(qp);
     // delete TxQueuePair
-    DeleteQueuePair(qp);
+
+ if (qp->IsPeriodic() && qp->m_round > 1) { 
+        qp->m_round--; 
+        AddQueuePairParameters params = {
+            qp->m_size, qp->m_pg, qp->sip, qp->dip, qp->sport,
+            qp->dport, qp->m_win, qp->m_baseRtt, qp->GetPeriod(), qp->m_round};
+        paramsList.push_back(params);
+        std::cout << "completeCount" << completeCount << "qp->m_round" << qp->m_round << "qp->sip" << qp->sip << std::endl;
+        completeCount++; 
+
+
+        if (completeCount >= targetCount) {
+            std::cout << "=======================================" << std::endl;
+            for (const auto& params : paramsList) 
+            {
+                std::cout << params.sip << " ";
+            }
+            std::cout << "=======================================" << std::endl;
+            completeCount = 0; // 重置计数器，为下一轮做准备
+            // qp->pauseTime = 0.3 * qp->GetPeriod();
+
+            // Simulator::Schedule(Seconds(qp->GetPeriod() + qp->pauseTime), &RdmaHw::ScheduleAddQueuePair, this, paramsList);
+            for(int i = 0; i < 20000; i++);
+            RdmaHw::ScheduleAddQueuePair(paramsList);
+            paramsList.clear();      
+        }
+    }
+    //qp->snd_una = 0;
+    // DeleteQueuePair(qp);
+}
+    
+
+void RdmaHw::ScheduleAddQueuePair(const std::vector<AddQueuePairParameters>& paramsList) {
+    // std::cout << "add "; 
+    for (const auto& params : paramsList) {
+    //    std::cout << params.sip << " "; 
+    AddQueuePair(params.size, params.pg, params.sip, params.dip, params.sport, params.dport, params.win, params.baseRtt, params.period, params.round);
+    // std::cout << std::endl;
+}
 }
 
 void RdmaHw::SetLinkDown(Ptr<QbbNetDevice> dev) {

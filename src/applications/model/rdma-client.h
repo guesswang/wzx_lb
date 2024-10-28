@@ -76,6 +76,8 @@ private:
   uint32_t m_win; // bound of on-the-fly packets
   uint64_t m_baseRtt; // base Rtt
   int32_t m_flow_id;
+  double m_period;
+  uint64_t m_round;
 };
 
 } // namespace ns3

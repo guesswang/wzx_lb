@@ -70,6 +70,19 @@ class RdmaQueuePair : public Object {
     int32_t m_flow_id;
     Time m_timeout;
 
+	double m_period;
+	uint64_t m_round;
+	bool IsPeriodic();
+    double GetPeriod();
+	double pauseTime; //给周期流添加暂停时间
+
+	/******************************
+   * jjx 标记是否为周期流
+   *****************************/
+  	bool m_flag;
+	void SetFlag();
+	bool GetFlag();
+
     /******************************
      * runtime states
      *****************************/
@@ -141,8 +154,9 @@ class RdmaQueuePair : public Object {
      * methods
      **********/
     static TypeId GetTypeId(void);
-    RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport,
-                  uint16_t _dport);
+    //RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport,
+    //              uint16_t _dport);
+    RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport, uint16_t _dport, double period, uint64_t round);
     void SetSize(uint64_t size);
     void SetWin(uint32_t win);
     void SetBaseRtt(uint64_t baseRtt);

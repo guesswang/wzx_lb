@@ -51,7 +51,13 @@ public:
    * \param port The port number of the remote udp server
    */
 
-  RdmaClientHelper (uint16_t pg, Ipv4Address sip, Ipv4Address dip, uint16_t sport, uint16_t dport, uint64_t size, uint32_t win, uint64_t baseRtt);
+
+	double m_period;
+	uint64_t m_round;
+	bool IsPeriodic();
+  double GetPeriod();
+
+RdmaClientHelper (uint16_t pg, Ipv4Address sip, Ipv4Address dip, uint16_t sport, uint16_t dport, uint64_t size, uint32_t win, uint64_t baseRtt, double period, uint64_t round);
 
   /**
    * Record an attribute to be set in each Application after it is is created.
