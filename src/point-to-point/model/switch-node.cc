@@ -93,32 +93,7 @@ uint32_t SwitchNode::DoLbFlowECMP(Ptr<const Packet> p, const CustomHeader &ch,
 
 uint32_t SwitchNode::DoLbBg(Ptr<const Packet> p, const CustomHeader &ch,
                                   const std::vector<int> &nexthops) {
-    // pick one next hop based on hash
-    if (nexthops.size() < 2) {
-        return nexthops[0]; 
-    }
-    union {
-        uint8_t u8[4 + 4 + 2 + 2];
-        uint32_t u32[3];
-    } buf;
-    buf.u32[0] = ch.sip;
-    buf.u32[1] = ch.dip;
-    if (ch.l3Prot == 0x6)
-        buf.u32[2] = ch.tcp.sport | ((uint32_t)ch.tcp.dport << 16);
-    else if (ch.l3Prot == 0x11)  // XXX RDMA traffic on UDP
-        buf.u32[2] = ch.udp.sport | ((uint32_t)ch.udp.dport << 16);
-    else if (ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  // ACK or NACK
-        buf.u32[2] = ch.ack.sport | ((uint32_t)ch.ack.dport << 16);
-    else {
-        std::cout << "[ERROR] Sw(" << m_id << ")," << PARSE_FIVE_TUPLE(ch)
-                  << "Cannot support other protoocls than TCP/UDP (l3Prot:" << ch.l3Prot << ")"
-                  << std::endl;
-        assert(false && "Cannot support other protoocls than TCP/UDP");
-    }
-
-    uint32_t hashVal = EcmpHash(buf.u8, 12, m_ecmpSeed);
-    uint32_t idx = hashVal % 2;
-    return nexthops[idx];
+        return nexthops[0];
 }
 
 /*-----------------CONGA-----------------*/

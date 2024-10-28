@@ -5,7 +5,7 @@
 #include <ns3/node.h>
 #include <ns3/rdma.h>
 #include <ns3/selective-packet-queue.h>
-
+#include <vector>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -21,6 +21,27 @@ struct RdmaInterfaceMgr {
     RdmaInterfaceMgr() : dev(NULL), qpGrp(NULL) {}
     RdmaInterfaceMgr(Ptr<QbbNetDevice> _dev) { dev = _dev; }
 };
+
+
+struct AddQueuePairParameters {
+    uint64_t size;
+    uint16_t pg;
+    Ipv4Address sip;
+    Ipv4Address dip;    
+    uint16_t sport;
+    uint16_t dport;
+    uint32_t win;
+    uint64_t baseRtt;
+    double period;
+    uint64_t round;
+};
+
+
+	extern double m_period;
+	extern uint64_t m_round;
+	bool IsPeriodic();
+    double GetPeriod();
+
 
 class RdmaHw : public Object {
    public:
@@ -62,14 +83,15 @@ class RdmaHw : public Object {
     uint32_t GetNicIdxOfQp(Ptr<RdmaQueuePair> qp);  // get the NIC index of the qp
     void DeleteQueuePair(Ptr<RdmaQueuePair> qp);    // delete TxQP
 
-    void AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address _sip, Ipv4Address _dip,
-                      uint16_t _sport, uint16_t _dport, uint32_t win, uint64_t baseRtt,
-                      int32_t flow_id);  // add a nw qp (new send)
-    void AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address _sip, Ipv4Address _dip,
-                      uint16_t _sport, uint16_t _dport, uint32_t win, uint64_t baseRtt) {
-        this->AddQueuePair(size, pg, _sip, _dip, _sport, _dport, win, baseRtt, -1);
-    }
-
+    // void AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address _sip, Ipv4Address _dip,
+    //                   uint16_t _sport, uint16_t _dport, uint32_t win, uint64_t baseRtt,
+    //                   int32_t flow_id);  // add a nw qp (new send)
+    // void AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address _sip, Ipv4Address _dip,
+    //                   uint16_t _sport, uint16_t _dport, uint32_t win, uint64_t baseRtt) {
+    //     this->AddQueuePair(size, pg, _sip, _dip, _sport, _dport, win, baseRtt, -1);
+    // }
+	void AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport, uint16_t _dport, uint32_t win, uint64_t baseRtt, double period, uint64_t round); // add a new qp (new send)
+	void ScheduleAddQueuePair(AddQueuePairParameters params);
     /* RxQueuePair */
     static uint64_t GetRxQpKey(uint32_t dip, uint16_t dport, uint16_t sport, uint16_t pg);
     Ptr<RdmaRxQueuePair> GetRxQp(uint32_t sip, uint32_t dip, uint16_t sport, uint16_t dport,

@@ -185,8 +185,10 @@ uint16_t *port_per_host;
 
 // Scheduling input flows from flow.txt
 struct FlowInput {
-    uint32_t src, dst, pg, maxPacketCount, port;
-    double start_time;
+    // uint32_t src, dst, pg, maxPacketCount, port;
+    // double start_time;
+    uint64_t src, dst, pg, maxPacketCount, port, dport, round;
+	double start_time, stop_time, period;
     uint32_t idx;
 };
 FlowInput flow_input = {0};  // global variable
@@ -197,8 +199,8 @@ uint32_t flow_num;
  */
 void ReadFlowInput() {
     if (flow_input.idx < flow_num) {
-        flowf >> flow_input.src >> flow_input.dst >> flow_input.pg >> flow_input.maxPacketCount >>
-            flow_input.start_time;
+        flowf >> flow_input.src >> flow_input.dst >> flow_input.pg >>  flow_input.maxPacketCount 
+                >> flow_input.start_time >> flow_input.period >> flow_input.round;
         assert(n.Get(flow_input.src)->GetNodeType() == 0 &&
                n.Get(flow_input.dst)->GetNodeType() == 0);
     } else {
@@ -233,7 +235,7 @@ void ScheduleFlowInputs(FILE *infile) {
             target_len = 1;
         }
         assert(n.Get(src)->GetNodeType() == 0 && n.Get(dst)->GetNodeType() == 0);
-
+        
         /**
          * Turn on if you want to record all input streams into output file for logging.
          * But, the input stream can be found in config. We do not recommend to do this
@@ -270,9 +272,9 @@ void ScheduleFlowInputs(FILE *infile) {
         }
 
         RdmaClientHelper clientHelper(
-            pg, serverAddress[src], serverAddress[dst], sport, dport, target_len,
+            flow_input.pg, serverAddress[src], serverAddress[dst], sport, dport, flow_input.maxPacketCount,
             has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(src)][n.Get(dst)]) : 0,
-            global_t == 1 ? maxRtt : pairRtt[n.Get(src)][n.Get(dst)]);
+            global_t == 1 ? maxRtt : pairRtt[n.Get(src)][n.Get(dst)], flow_input.period, flow_input.round);
         clientHelper.SetAttribute("StatFlowID", IntegerValue(flow_input.idx));
 
         ApplicationContainer appCon = clientHelper.Install(n.Get(src));  // SRC
@@ -483,9 +485,10 @@ void qp_finish(FILE *fout, Ptr<RdmaQueuePair> q) {
     rdma->m_rdma->DeleteRxQp(q->sip.Get(), q->sport, q->dport, q->m_pg);
 
     // fprintf(fout, "%lu QP complete\n", Simulator::Now().GetTimeStep());
+    
     fprintf(fout, "%u %u %u %u %lu %lu %lu %lu\n", Settings::ip_to_node_id(q->sip),
             Settings::ip_to_node_id(q->dip), q->sport, q->dport, q->m_size,
-            q->startTime.GetTimeStep(), (Simulator::Now() - q->startTime).GetTimeStep(),
+            q->startTime.GetTimeStep(), (Simulator::Now()).GetTimeStep(),
             standalone_fct);
 
     // for debugging
@@ -562,7 +565,7 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
  * This function allows to finish simulation quickly when all messages are sent.
  */
 void stop_simulation_middle() {
-    uint32_t target_flow_num = flow_num - 0;  // can be lower than flownum
+    uint32_t target_flow_num = flow_num *8;  // can be lower than flownum
     if (Settings::cnt_finished_flows >= target_flow_num) {
         std::cout << "\n*** Simulator is enforced to be finished, finished so far: "
                   << Settings::cnt_finished_flows << "/ total: " << target_flow_num

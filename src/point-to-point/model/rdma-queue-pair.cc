@@ -24,8 +24,7 @@ TypeId RdmaQueuePair::GetTypeId(void) {
     return tid;
 }
 
-RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport,
-                             uint16_t _dport) {
+RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport, uint16_t _dport, double period, uint64_t round) {
     startTime = Simulator::Now();
     sip = _sip;
     dip = _dip;
@@ -34,6 +33,8 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
     m_size = 0;
     snd_nxt = snd_una = 0;
     m_pg = pg;
+    m_period = period;
+    m_round = round;
     m_ipid = 0;
     m_win = 0;
     m_baseRtt = 0;
@@ -104,6 +105,25 @@ uint64_t RdmaQueuePair::GetBytesLeft() {
 
     return m_size >= snd_nxt ? m_size - snd_nxt : 0;
 }
+
+bool RdmaQueuePair::IsPeriodic(){
+    // 如果period大于0，表示是周期流
+        return m_period != 0;
+}
+
+void RdmaQueuePair::SetFlag(){
+    // 如果period大于0，表示是周期流
+	m_flag = (m_period != 0);
+}
+
+bool RdmaQueuePair::GetFlag(){
+	return m_flag;
+}
+
+// 获取周期
+double RdmaQueuePair::GetPeriod(){
+    return m_period;
+ }
 
 uint32_t RdmaQueuePair::GetHash(void) {
     union {
