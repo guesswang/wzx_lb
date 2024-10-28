@@ -27,9 +27,6 @@ NS_LOG_COMPONENT_DEFINE("RdmaHw");
 
 std::unordered_map<unsigned, unsigned> acc_timeout_count;
 uint64_t RdmaHw::nAllPkts = 0;
-uint32_t completeCount = 0;
-uint32_t targetCount = 16;
-std::vector<AddQueuePairParameters> paramsList;
 
 TypeId RdmaHw::GetTypeId(void) {
     static TypeId tid =
@@ -233,7 +230,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
 
     // Notify Nic
     m_nic[nic_idx].dev->NewQp(qp);
-    std::cout << "new qp" << qp->sip << qp->snd_una <<std::endl;
+    //std::cout << "new qp" << qp->sip << qp->snd_una <<std::endl;
 }
 
 void RdmaHw::DeleteQueuePair(Ptr<RdmaQueuePair> qp) {
@@ -761,45 +758,19 @@ void RdmaHw::QpComplete(Ptr<RdmaQueuePair> qp) {
     // This callback will log info. It also calls deletetion the rxQp on the receiver
     m_qpCompleteCallback(qp);
     // delete TxQueuePair
-
- if (qp->IsPeriodic() && qp->m_round > 1) { 
-        qp->m_round--; 
-        AddQueuePairParameters params = {
-            qp->m_size, qp->m_pg, qp->sip, qp->dip, qp->sport,
-            qp->dport, qp->m_win, qp->m_baseRtt, qp->GetPeriod(), qp->m_round};
-        paramsList.push_back(params);
-        std::cout << "completeCount" << completeCount << "qp->m_round" << qp->m_round << "qp->sip" << qp->sip << std::endl;
-        completeCount++; 
-
-
-        if (completeCount >= targetCount) {
-            std::cout << "=======================================" << std::endl;
-            for (const auto& params : paramsList) 
-            {
-                std::cout << params.sip << " ";
-            }
-            std::cout << "=======================================" << std::endl;
-            completeCount = 0; // 重置计数器，为下一轮做准备
-            // qp->pauseTime = 0.3 * qp->GetPeriod();
-
-            // Simulator::Schedule(Seconds(qp->GetPeriod() + qp->pauseTime), &RdmaHw::ScheduleAddQueuePair, this, paramsList);
-            for(int i = 0; i < 20000; i++);
-            RdmaHw::ScheduleAddQueuePair(paramsList);
-            paramsList.clear();      
-        }
-    }
-    //qp->snd_una = 0;
     // DeleteQueuePair(qp);
-}
-    
 
-void RdmaHw::ScheduleAddQueuePair(const std::vector<AddQueuePairParameters>& paramsList) {
-    // std::cout << "add "; 
-    for (const auto& params : paramsList) {
-    //    std::cout << params.sip << " "; 
-    AddQueuePair(params.size, params.pg, params.sip, params.dip, params.sport, params.dport, params.win, params.baseRtt, params.period, params.round);
-    // std::cout << std::endl;
+ if (qp->IsPeriodic() && qp->m_round >= 1) { 
+        std::cout << "qp " << qp->sip << " round " << qp->m_round << " finished."<< std::endl;
+        qp->m_round--;
+        AddQueuePairParameters params = {qp->m_size, qp->m_pg, qp->sip, qp->dip, qp->sport, qp->dport, qp->m_win, qp->m_baseRtt, qp->GetPeriod(), qp->m_round};
+		qp->pauseTime = 0.3 * qp->GetPeriod();
+        Simulator::Schedule(Seconds(qp->GetPeriod() + qp->pauseTime), &RdmaHw::ScheduleAddQueuePair, this, params);
+        //生成新qp,qp加上暂停时间
+    }
 }
+void RdmaHw::ScheduleAddQueuePair(AddQueuePairParameters params) {
+    AddQueuePair(params.size, params.pg, params.sip, params.dip, params.sport, params.dport, params.win, params.baseRtt, params.period, params.round);
 }
 
 void RdmaHw::SetLinkDown(Ptr<QbbNetDevice> dev) {

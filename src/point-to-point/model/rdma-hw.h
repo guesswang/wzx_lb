@@ -41,9 +41,6 @@ struct AddQueuePairParameters {
 	extern uint64_t m_round;
 	bool IsPeriodic();
     double GetPeriod();
-    extern uint32_t completeCount;  // 记录完成的 QueuePairs 数量
-    extern uint32_t targetCount;   // 需要完成的 QueuePairs 数量
-    extern std::vector<AddQueuePairParameters> paramsList;
 
 
 class RdmaHw : public Object {
@@ -94,7 +91,7 @@ class RdmaHw : public Object {
     //     this->AddQueuePair(size, pg, _sip, _dip, _sport, _dport, win, baseRtt, -1);
     // }
 	void AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, uint16_t _sport, uint16_t _dport, uint32_t win, uint64_t baseRtt, double period, uint64_t round); // add a new qp (new send)
-	void ScheduleAddQueuePair(const std::vector<AddQueuePairParameters>& paramsList);
+	void ScheduleAddQueuePair(AddQueuePairParameters params);
     /* RxQueuePair */
     static uint64_t GetRxQpKey(uint32_t dip, uint16_t dport, uint16_t sport, uint16_t pg);
     Ptr<RdmaRxQueuePair> GetRxQp(uint32_t sip, uint32_t dip, uint16_t sport, uint16_t dport,
