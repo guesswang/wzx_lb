@@ -84,10 +84,11 @@ class LetflowRouting : public Object {
     static uint32_t GetOutPortFromPath(const uint32_t& path, const uint32_t& hopCount);               // decode outPort from path, given a hop's order
     static void SetOutPortToPath(uint32_t& path, const uint32_t& hopCount, const uint32_t& outPort);  // encode outPort to path
     static uint32_t nFlowletTimeout;                                                                  // number of flowlet's timeout
-
+    
     /* main function */
     uint32_t RouteInput(Ptr<Packet> p, CustomHeader ch);
     uint32_t GetRandomPath(uint32_t dstTorId);
+    
     virtual void DoDispose();
 
     /* SET functions */
@@ -106,12 +107,10 @@ class LetflowRouting : public Object {
    private:
     // topology parameters
     bool m_isToR;          // is ToR (leaf)
-    uint32_t m_switch_id;  // switch's nodeID
-
+    uint32_t m_switch_id;  // switch's nodeID;
     // conga constants
     Time m_agingTime;       // expiry of flowlet entry
     Time m_flowletTimeout;  // flowlet timeout (e.g., 100us)
-
     // local
     std::map<uint64_t, Flowlet*> m_flowletTable;  // QpKey -> Flowlet (at SrcToR)
 };

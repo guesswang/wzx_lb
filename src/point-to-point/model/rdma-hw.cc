@@ -336,11 +336,11 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
 
     bool cnp_check = false;
     int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size, cnp_check);
-    if(ch.dip == 184581889) {
-    // std::cout << "Host with source IP: " << ch.sip
-    //       << " received sequence number: " << ch.udp.seq
-    //       << " at time: " << Simulator::Now().GetNanoSeconds() << " ns." << std::endl;
-    }
+    //if(ch.dip == 184581889) {
+    std::cout << "Host with source IP: " << ch.sip
+          << " received sequence number: " << ch.udp.seq
+          << " at time: " << Simulator::Now().GetNanoSeconds() << " ns." << std::endl;
+    //}
 
     if (x == 1 || x == 2 || x == 6) {  // generate ACK or NACK
         qbbHeader seqh;
@@ -521,6 +521,9 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
                 qp->snd_nxt = qp->snd_una;
             }
         }
+        // std::cout << "Host with source IP: " << ch.sip
+        //   << " received ack: " << ch.udp.seq
+        //   << " at time: " << Simulator::Now().GetNanoSeconds() << " ns." << std::endl;
         if (qp->IsFinished()) {
             QpComplete(qp);
 
@@ -541,6 +544,7 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
         if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
         qp->m_retransmit = Simulator::Schedule(qp->GetRto(m_mtu), &RdmaHw::HandleTimeout, this, qp,
                                                qp->GetRto(m_mtu));
+        //std::cout<<"retrans" <<std::endl;
     }
 
     if (m_irn) {
@@ -613,119 +617,119 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch) {
  * 4: OoO, but skip to send NACK as it is already NACKed.
  * 6: NACK but functionality is ACK (indicating all packets are received)
  */
-int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size, bool &cnp) {
-    uint32_t expected = q->ReceiverNextExpectedSeq;
-    if (seq == expected || (seq < expected && seq + size >= expected)) {
-        if (m_irn) {
-            if (q->m_milestone_rx < seq + size) q->m_milestone_rx = seq + size;
-            q->ReceiverNextExpectedSeq += size - (expected - seq);
-            {
-                uint32_t sack_seq, sack_len;
-                if (q->m_irn_sack_.peekFrontBlock(&sack_seq, &sack_len)) {
-                    if (sack_seq <= q->ReceiverNextExpectedSeq)
-                        q->ReceiverNextExpectedSeq +=
-                            (sack_len - (q->ReceiverNextExpectedSeq - sack_seq));
-                }
-            }
-            size_t progress = q->m_irn_sack_.discardUpTo(q->ReceiverNextExpectedSeq);
-            if (q->m_irn_sack_.IsEmpty()) {
-                return 6;  // This generates NACK, but actually functions as an ACK (indicates all
-                           // packet has been received)
-            } else {
-                // should we put nack timer here
-                return 2;  // Still in loss recovery mode of IRN
-            }
-            return 0;  // should not reach here
-        }
-
-        q->ReceiverNextExpectedSeq += size - (expected - seq);
-        if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
-            q->m_milestone_rx +=
-                m_ack_interval;  // if ack_interval is small (e.g., 1), condition is meaningless
-            return 1;            // Generate ACK
-        } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
-            return 1;
-        } else {
-            return 5;
-        }
-    } else if (seq > expected) {
-        // Generate NACK
-        if (m_irn) {
-            if (q->m_milestone_rx < seq + size) q->m_milestone_rx = seq + size;
-
-            // if seq is already nacked, check for nacktimer
-            if (q->m_irn_sack_.blockExists(seq, size) && Simulator::Now() < q->m_nackTimer) {
-                return 4;  // don't need to send nack yet
-            }
-            q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
-            q->m_irn_sack_.sack(seq, size);  // set SACK
-            NS_ASSERT(q->m_irn_sack_.discardUpTo(expected) ==
-                      0);  // SACK blocks must be larger than expected
-            cnp = true;    // XXX: out-of-order should accompany with CNP (?) TODO: Check on CX6
-            return 2;      // generate SACK
-        }
-        if (Simulator::Now() >= q->m_nackTimer || q->m_lastNACK != expected) {  // new NACK
-            q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
-            q->m_lastNACK = expected;
-            if (m_backto0) {
-                q->ReceiverNextExpectedSeq = q->ReceiverNextExpectedSeq / m_chunk * m_chunk;
-            }
-            cnp = true;  // XXX: out-of-order should accompany with CNP (?) TODO: Check on CX6
-            return 2;
-        } else {
-            // skip to send NACK
-            return 4;
-        }
-    } else {
-        // Duplicate.
-        if (m_irn) {
-            // if (q->ReceiverNextExpectedSeq - 1 == q->m_milestone_rx) {
-            // 	return 6; // This generates NACK, but actually functions as an ACK (indicates all
-            // packet has been received)
-            // }
-            if (q->m_irn_sack_.IsEmpty()) {
-                return 6;  // This generates NACK, but actually functions as an ACK (indicates all
-                           // packet has been received)
-            } else {
-                // should we put nack timer here
-                return 2;  // Still in loss recovery mode of IRN
-            }
-        }
-        // Duplicate.
-        return 1;  // According to IB Spec C9-110
-                   /**
-                    * IB Spec C9-110
-                    * A responder shall respond to all duplicate requests in PSN order;
-                    * i.e. the request with the (logically) earliest PSN shall be executed first. If,
-                    * while responding to a new or duplicate request, a duplicate request is received
-                    * with a logically earlier PSN, the responder shall cease responding
-                    * to the original request and shall begin responding to the duplicate request
-                    * with the logically earlier PSN.
-                    */
-    }
-}
-
 // int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size, bool &cnp) {
-// uint32_t expected = q->ReceiverNextExpectedSeq;
-// // 处理按序和乱序包：都当作按序包处理，始终生成 ACK
-// if (seq >= expected) {
-//     // 更新接收端的下一个期望序列号
-//     q->ReceiverNextExpectedSeq += size - (expected - seq);
+//     uint32_t expected = q->ReceiverNextExpectedSeq;
+//     if (seq == expected || (seq < expected && seq + size >= expected)) {
+//         if (m_irn) {
+//             if (q->m_milestone_rx < seq + size) q->m_milestone_rx = seq + size;
+//             q->ReceiverNextExpectedSeq += size - (expected - seq);
+//             {
+//                 uint32_t sack_seq, sack_len;
+//                 if (q->m_irn_sack_.peekFrontBlock(&sack_seq, &sack_len)) {
+//                     if (sack_seq <= q->ReceiverNextExpectedSeq)
+//                         q->ReceiverNextExpectedSeq +=
+//                             (sack_len - (q->ReceiverNextExpectedSeq - sack_seq));
+//                 }
+//             }
+//             size_t progress = q->m_irn_sack_.discardUpTo(q->ReceiverNextExpectedSeq);
+//             if (q->m_irn_sack_.IsEmpty()) {
+//                 return 6;  // This generates NACK, but actually functions as an ACK (indicates all
+//                            // packet has been received)
+//             } else {
+//                 // should we put nack timer here
+//                 return 2;  // Still in loss recovery mode of IRN
+//             }
+//             return 0;  // should not reach here
+//         }
 
-//     // 如果已经达到 ACK 里程碑，生成 ACK
-//     if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
-//         q->m_milestone_rx += m_ack_interval;
-//         return 1;  // 生成 ACK
-//     } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
-//         return 1;  // 每达到一定块大小时，继续生成 ACK
+//         q->ReceiverNextExpectedSeq += size - (expected - seq);
+//         if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
+//             q->m_milestone_rx +=
+//                 m_ack_interval;  // if ack_interval is small (e.g., 1), condition is meaningless
+//             return 1;            // Generate ACK
+//         } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
+//             return 1;
+//         } else {
+//             return 5;
+//         }
+//     } else if (seq > expected) {
+//         // Generate NACK
+//         if (m_irn) {
+//             if (q->m_milestone_rx < seq + size) q->m_milestone_rx = seq + size;
+
+//             // if seq is already nacked, check for nacktimer
+//             if (q->m_irn_sack_.blockExists(seq, size) && Simulator::Now() < q->m_nackTimer) {
+//                 return 4;  // don't need to send nack yet
+//             }
+//             q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
+//             q->m_irn_sack_.sack(seq, size);  // set SACK
+//             NS_ASSERT(q->m_irn_sack_.discardUpTo(expected) ==
+//                       0);  // SACK blocks must be larger than expected
+//             cnp = true;    // XXX: out-of-order should accompany with CNP (?) TODO: Check on CX6
+//             return 2;      // generate SACK
+//         }
+//         if (Simulator::Now() >= q->m_nackTimer || q->m_lastNACK != expected) {  // new NACK
+//             q->m_nackTimer = Simulator::Now() + MicroSeconds(m_nack_interval);
+//             q->m_lastNACK = expected;
+//             if (m_backto0) {
+//                 q->ReceiverNextExpectedSeq = q->ReceiverNextExpectedSeq / m_chunk * m_chunk;
+//             }
+//             cnp = true;  // XXX: out-of-order should accompany with CNP (?) TODO: Check on CX6
+//             return 2;
+//         } else {
+//             // skip to send NACK
+//             return 4;
+//         }
 //     } else {
-//         return 5;  // 处理特殊情况但不生成 NACK
+//         // Duplicate.
+//         if (m_irn) {
+//             // if (q->ReceiverNextExpectedSeq - 1 == q->m_milestone_rx) {
+//             // 	return 6; // This generates NACK, but actually functions as an ACK (indicates all
+//             // packet has been received)
+//             // }
+//             if (q->m_irn_sack_.IsEmpty()) {
+//                 return 6;  // This generates NACK, but actually functions as an ACK (indicates all
+//                            // packet has been received)
+//             } else {
+//                 // should we put nack timer here
+//                 return 2;  // Still in loss recovery mode of IRN
+//             }
+//         }
+//         // Duplicate.
+//         return 1;  // According to IB Spec C9-110
+//                    /**
+//                     * IB Spec C9-110
+//                     * A responder shall respond to all duplicate requests in PSN order;
+//                     * i.e. the request with the (logically) earliest PSN shall be executed first. If,
+//                     * while responding to a new or duplicate request, a duplicate request is received
+//                     * with a logically earlier PSN, the responder shall cease responding
+//                     * to the original request and shall begin responding to the duplicate request
+//                     * with the logically earlier PSN.
+//                     */
 //     }
-// } else {
-//     // 处理重复包：即使是重复包，也生成 ACK
-//     return 1;  // 生成 ACK
-// 	}
 // }
+
+int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size, bool &cnp) {
+uint32_t expected = q->ReceiverNextExpectedSeq;
+// 处理按序和乱序包：都当作按序包处理，始终生成 ACK
+if (seq >= expected) {
+    // 更新接收端的下一个期望序列号
+    q->ReceiverNextExpectedSeq += size - (expected - seq);
+
+    // 如果已经达到 ACK 里程碑，生成 ACK
+    if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx) {
+        q->m_milestone_rx += m_ack_interval;
+        return 1;  // 生成 ACK
+    } else if (q->ReceiverNextExpectedSeq % m_chunk == 0) {
+        return 1;  // 每达到一定块大小时，继续生成 ACK
+    } else {
+        return 5;  // 处理特殊情况但不生成 NACK
+    }
+} else {
+    // 处理重复包：即使是重复包，也生成 ACK
+    return 1;  // 生成 ACK
+	}
+}
 
 void RdmaHw::AddHeader(Ptr<Packet> p, uint16_t protocolNumber) {
     PppHeader ppp;
@@ -758,16 +762,16 @@ void RdmaHw::QpComplete(Ptr<RdmaQueuePair> qp) {
     // This callback will log info. It also calls deletetion the rxQp on the receiver
     m_qpCompleteCallback(qp);
     // delete TxQueuePair
-    // DeleteQueuePair(qp);
+    DeleteQueuePair(qp);
 
- if (qp->IsPeriodic() && qp->m_round >= 1) { 
-        std::cout << "qp " << qp->sip << " round " << qp->m_round << " finished."<< std::endl;
-        qp->m_round--;
-        AddQueuePairParameters params = {qp->m_size, qp->m_pg, qp->sip, qp->dip, qp->sport, qp->dport, qp->m_win, qp->m_baseRtt, qp->GetPeriod(), qp->m_round};
-		qp->pauseTime = 0.3 * qp->GetPeriod();
-        Simulator::Schedule(Seconds(qp->GetPeriod() + qp->pauseTime), &RdmaHw::ScheduleAddQueuePair, this, params);
-        //生成新qp,qp加上暂停时间
-    }
+//  if (qp->IsPeriodic() && qp->m_round >= 1) { 
+//         std::cout << "qp " << qp->sip << " round " << qp->m_round << " finished."<< std::endl;
+//         qp->m_round--;
+//         AddQueuePairParameters params = {qp->m_size, qp->m_pg, qp->sip, qp->dip, qp->sport, qp->dport, qp->m_win, qp->m_baseRtt, qp->GetPeriod(), qp->m_round};
+// 		qp->pauseTime = 0.3 * qp->GetPeriod();
+//         Simulator::Schedule(Seconds(qp->GetPeriod() + qp->pauseTime), &RdmaHw::ScheduleAddQueuePair, this, params);
+//         //生成新qp,qp加上暂停时间
+//     }
 }
 void RdmaHw::ScheduleAddQueuePair(AddQueuePairParameters params) {
     AddQueuePair(params.size, params.pg, params.sip, params.dip, params.sport, params.dport, params.win, params.baseRtt, params.period, params.round);
@@ -895,6 +899,7 @@ void RdmaHw::PktSent(Ptr<RdmaQueuePair> qp, Ptr<Packet> pkt, Time interframeGap)
             if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
             qp->m_retransmit = Simulator::Schedule(qp->GetRto(m_mtu), &RdmaHw::HandleTimeout, this,
                                                    qp, qp->GetRto(m_mtu));
+            //std::cout <<qp->sip << "sent pkt " << ch.udp.seq << Simulator::Now().GetNanoSeconds()<< std::endl;
         } else if (ch.l3Prot == 0xFC || ch.l3Prot == 0xFD || ch.l3Prot == 0xFF) {  // ACK, NACK, CNP
         } else if (ch.l3Prot == 0xFE) {                                            // PFC
         }

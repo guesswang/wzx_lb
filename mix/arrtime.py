@@ -21,9 +21,9 @@ def process_log_file(file_path):
 def extract_last_arrival_times(sequence_times):
     tenth_times = []
     for sequence_number, ip_times in sequence_times.items():
-        if len(ip_times) == 8:  
+        if len(ip_times) == 32:  
             sorted_times = sorted(ip_times.values())  
-            tenth_times.append(sorted_times[7] / 1e9)  
+            tenth_times.append(sorted_times[31] / 1e9)  
     return tenth_times
 
 def plot_cdf(data_list, file_paths, output_file):
@@ -50,8 +50,7 @@ def plot_cdf(data_list, file_paths, output_file):
 
 file_paths = [
     'output/ecmp/config.log',
-    'output/conweave/config.log',
-    'output/halflife/config.log',
+    'output/letflow/config.log',
     'output/drill/config.log',
     'output/wzx/config.log'
 ]

@@ -1,5 +1,5 @@
 #include "switch-node.h"
-
+#include "ns3/core-module.h"
 #include "assert.h"
 #include "ns3/boolean.h"
 #include "ns3/conweave-routing.h"
@@ -19,6 +19,8 @@
 
 namespace ns3 {
 
+ns3::Time SwitchNode::lastUpdate = ns3::Seconds(0);
+std::vector<int> fastestNexthops;
 TypeId SwitchNode::GetTypeId(void) {
     static TypeId tid =
         TypeId("ns3::SwitchNode")
@@ -61,10 +63,10 @@ SwitchNode::SwitchNode() {
  */
 uint32_t SwitchNode::DoLbFlowECMP(Ptr<const Packet> p, const CustomHeader &ch,
                                   const std::vector<int> &nexthops) {
-    if(ch.dip != 184581889) {
+    //if(ch.dip != 184581889) {
         //std::cout << "Switching to DoLbBg because ch.dip is " << ch.dip << std::endl;
-        return DoLbBg(p, ch, nexthops);
-    }
+        //return DoLbBg(p, ch, nexthops);
+    //}
     // pick one next hop based on hash
     union {
         uint8_t u8[4 + 4 + 2 + 2];
@@ -86,7 +88,15 @@ uint32_t SwitchNode::DoLbFlowECMP(Ptr<const Packet> p, const CustomHeader &ch,
     }
 
     uint32_t hashVal = EcmpHash(buf.u8, 12, m_ecmpSeed);
-    uint32_t idx = hashVal % nexthops.size();
+    uint32_t idx;
+    if(nexthops.size()> 1){
+        //idx = hashVal % nexthops.size();
+        idx = hashVal % 3;
+        //std::cout <<"seq ecmp "<< ch.udp.seq/1000 << "choose " << nexthops[idx] << std::endl;
+    }
+    else{
+        idx = 0;
+    } 
     return nexthops[idx];
 }
 
@@ -122,86 +132,88 @@ uint32_t SwitchNode::DoLbLetflow(Ptr<Packet> p, CustomHeader &ch,
     return outPort;
 }
 
+uint32_t SwitchNode::DoLbWzx(Ptr<const Packet> p, const CustomHeader &ch,
+                             const std::vector<int> &nexthops) {
+    //if(ch.dip != 184581889) return DoLbBg(p, ch, nexthops);
+    uint32_t seq = ch.udp.seq / 1000;  
+    uint32_t selectedPort;
+    const Time updateInterval = MicroSeconds(10); //10us
+
+    // std::cout << "++++++++++++++" << std::endl;
+    // std::cout << lastUpdate << std::endl;
+    if(nexthops.size() > 1){
+        if(lastUpdate == Seconds(0)){
+            UpdateFastestPaths(nexthops); 
+            lastUpdate = Simulator::Now();
+        }
+        //std::cout << Simulator::Now() <<" - " << lastUpdate << " = " << Simulator::Now() - lastUpdate << std::endl;
+        if (Simulator::Now() - lastUpdate > updateInterval) {
+            lastUpdate = Simulator::Now();  
+            //std::cout << "update---------------" << std::endl;
+            UpdateFastestPaths(nexthops); 
+        }
+        //std::cout << "seq " << seq << " % " << fastestNexthops.size() << std::endl;
+        selectedPort = fastestNexthops[seq % fastestNexthops.size()];
+        //std::cout << "seq " << seq << " choose port " <<  selectedPort << std::endl;
+    }
+    else {
+        selectedPort = nexthops[0];
+        //std::cout << "empty seq " << seq << " choose port " <<  selectedPort << std::endl;
+    }
+    return selectedPort;
+}
+
 // uint32_t SwitchNode::DoLbWzx(Ptr<const Packet> p, const CustomHeader &ch,
 //                              const std::vector<int> &nexthops) {
 //     if(ch.dip != 184581889) return DoLbBg(p, ch, nexthops);
-//     if (lastUpdate == Seconds(0)) {
-//         lastUpdate = Simulator::Now();
-//     }
-
-//     uint32_t seq = ch.udp.seq / 1000;  
+//     uint32_t seq = ch.udp.seq / 1000;
 //     uint32_t selectedPort;
-//     const Time updateInterval = MilliSeconds(1);  // update map
 
-//     if (Simulator::Now() - lastUpdate > updateInterval) {
-//         UpdateFastestPaths(nexthops); 
-//         lastUpdate = Simulator::Now();  
-//     }
+//     if (nexthops.size() > 1) {
+//         if (m_seqPortMap.find(seq) != m_seqPortMap.end()) {
+//             selectedPort = m_seqPortMap[seq];
+//         } else {
+//             // 遍历所有端口，找到负载最小的端口
+//             uint32_t leastLoadInterface = nexthops[0];
+//             uint32_t leastLoad = CalculateInterfaceLoad(nexthops[0]);
 
-//     if (!fastestNexthops.empty()) {
-//         std::hash<uint32_t> hasher;
-//         size_t hashValue = hasher(seq); 
+//             for (size_t i = 1; i < nexthops.size()-1; ++i) {
+//                 uint32_t currentLoad = CalculateInterfaceLoad(nexthops[i]);
+//                 if (currentLoad < leastLoad) {
+//                     leastLoad = currentLoad;
+//                     leastLoadInterface = nexthops[i];
+//                 }
+//             }
 
-//         selectedPort = fastestNexthops[hashValue % fastestNexthops.size()];
+//             selectedPort = leastLoadInterface;
+//             m_seqPortMap[seq] = selectedPort;
+//         }
 //     } else {
 //         selectedPort = nexthops[0];
 //     }
 
 //     return selectedPort;
-// }
-
-uint32_t SwitchNode::DoLbWzx(Ptr<const Packet> p, const CustomHeader &ch,
-                             const std::vector<int> &nexthops) {
-    if(ch.dip != 184581889) return DoLbBg(p, ch, nexthops);
-    uint32_t seq = ch.udp.seq / 1000;
-    uint32_t selectedPort;
-
-    if (nexthops.size() > 1) {
-        if (m_seqPortMap.find(seq) != m_seqPortMap.end()) {
-            selectedPort = m_seqPortMap[seq];
-        } else {
-            // 遍历所有端口，找到负载最小的端口
-            uint32_t leastLoadInterface = nexthops[0];
-            uint32_t leastLoad = CalculateInterfaceLoad(nexthops[0]);
-
-            for (size_t i = 1; i < nexthops.size(); ++i) {
-                uint32_t currentLoad = CalculateInterfaceLoad(nexthops[i]);
-                if (currentLoad < leastLoad) {
-                    leastLoad = currentLoad;
-                    leastLoadInterface = nexthops[i];
-                }
-            }
-
-            selectedPort = leastLoadInterface;
-            m_seqPortMap[seq] = selectedPort;
-        }
-    } else {
-        selectedPort = nexthops[0];
-    }
-
-    return selectedPort;
-    }
+//     }
 
     
 
 void SwitchNode::UpdateFastestPaths(const std::vector<int>& nexthops) {
     std::vector<std::pair<int, uint32_t>> loadInfo;
-
-    for (auto port : nexthops) {
-        uint32_t load = CalculateInterfaceLoad(port); 
-        loadInfo.push_back({port, load}); 
+    //std::cout << "fast!!!!!!!!!!!! " <<std::endl;
+    for(size_t i = 1; i < nexthops.size(); ++i){
+        uint32_t load = CalculateInterfaceLoad(nexthops[i]);
+        loadInfo.push_back({nexthops[i], load});  
     }
 
     std::sort(loadInfo.begin(), loadInfo.end(), 
               [](const std::pair<int, uint32_t>& a, const std::pair<int, uint32_t>& b) {
                   return a.second < b.second; 
               });
-
     fastestNexthops.clear();  
-    size_t numPaths = std::min(size_t(3), loadInfo.size());
 
-    for (size_t i = 0; i < numPaths; ++i) {
-        fastestNexthops.push_back(loadInfo[i].first);  // 保存负载最小的前 3 条路径
+    for (size_t i = 0; i < 3; ++i) {
+        fastestNexthops.push_back(loadInfo[i].first);
+        //std::cout << "path " << i << " port " << fastestNexthops[i] << std::endl;
     }
 }
 
@@ -231,8 +243,8 @@ uint32_t SwitchNode::DoLbHalflife(Ptr<const Packet> p, const CustomHeader &ch,
             leastLoadInterface = nexthops[0]; // 初始化为第一个可用的路径
         }
 
-        uint32_t randPath1 = *(std::next(nexthops.begin(), rand() % nexthops.size()));
-        uint32_t randPath2 = *(std::next(nexthops.begin(), rand() % nexthops.size()));
+        uint32_t randPath1 = *(std::next(nexthops.begin(), rand() % 3));
+        uint32_t randPath2 = *(std::next(nexthops.begin(), rand() % 3));
 
         uint32_t randLoad1 = CalculateInterfaceLoad(randPath1);
         uint32_t randLoad2 = CalculateInterfaceLoad(randPath2);
@@ -282,7 +294,7 @@ uint32_t SwitchNode::CalculateInterfaceLoad(uint32_t interface) {
 
 uint32_t SwitchNode::DoLbDrill(Ptr<const Packet> p, const CustomHeader &ch,
                                const std::vector<int> &nexthops) {
-    if(ch.dip != 184581889) return DoLbBg(p, ch, nexthops);
+    //if(ch.sip == 184573953) return nexthops[0];
     // find the Egress (output) link with the smallest local Egress Queue length
     uint32_t leastLoadInterface = 0;
     uint32_t leastLoad = std::numeric_limits<uint32_t>::max();
@@ -295,17 +307,58 @@ uint32_t SwitchNode::DoLbDrill(Ptr<const Packet> p, const CustomHeader &ch,
         leastLoad = CalculateInterfaceLoad(itr->second);
     }
 
-    uint32_t sampleNum =
-        m_drill_candidate < rand_nexthops.size() ? m_drill_candidate : rand_nexthops.size();
-    for (uint32_t samplePort = 0; samplePort < sampleNum; samplePort++) {
-        uint32_t sampleLoad = CalculateInterfaceLoad(rand_nexthops[samplePort]);
-        if (sampleLoad < leastLoad) {
-            leastLoad = sampleLoad;
-            leastLoadInterface = rand_nexthops[samplePort];
+    // uint32_t sampleNum =
+    //     m_drill_candidate < rand_nexthops.size() ? m_drill_candidate : rand_nexthops.size();
+    if(nexthops.size() > 1){
+        for (uint32_t samplePort = 0; samplePort < 2; samplePort++) {
+            uint32_t sampleLoad = CalculateInterfaceLoad(rand_nexthops[samplePort]);
+            if (sampleLoad < leastLoad) {
+                leastLoad = sampleLoad;
+                leastLoadInterface = rand_nexthops[samplePort];
+            }
         }
-    }
-    m_previousBestInterfaceMap[ch.dip] = leastLoadInterface;
+        m_previousBestInterfaceMap[ch.dip] = leastLoadInterface;
+        std::cout << ch.sip<<" seq drill "<< ch.udp.seq/1000 << "choose " << leastLoadInterface << std::endl;
+    }else{
+        leastLoadInterface = nexthops[0];
+    }   
+
     return leastLoadInterface;
+    // uint32_t selectedPort = nexthops[0];
+    // uint32_t leastload = CalculateInterfaceLoad(nexthops[0]);
+
+    // if(nexthops.size()> 1){
+    //     auto itr = m_previousBestInterfaceMap.find(ch.dip);
+    //     if (itr != m_previousBestInterfaceMap.end()) {
+    //         uint32_t lastport = itr->second;
+    //         uint32_t lastload = CalculateInterfaceLoad(itr->second);
+    //         leastload = lastload;
+    //         selectedPort = lastport;
+    //     }
+    // //     //std::cout <<"before"<<  leastLoadInterface << leastLoad << std::endl;
+    // //     //auto rand_nexthops = nexthops;
+    //     //std::random_shuffle(rand_nexthops.begin(), rand_nexthops.end());
+    //     uint32_t idx1 = nexthops[rand()% nexthops.size()];
+    //     uint32_t idx2 = nexthops[rand()% nexthops.size()];
+    //     // uint32_t idx1 = nexthops[ch.udp.seq/1000 % nexthops.size()];
+    //     // uint32_t idx2 = nexthops[(ch.udp.seq/1000 +1)% nexthops.size()];
+    //     uint32_t load1 = CalculateInterfaceLoad(idx1);
+    //     uint32_t load2 = CalculateInterfaceLoad(idx2);
+    //     //std::cout << "idx1 "<< idx1 << " load1 "<< load1 << "idx2 "<< idx2 << " load2 "<<load2 << " leastload "<<leastload<<std::endl;
+    //     if (load1 < leastload) {
+    //         leastload = load1;
+    //         selectedPort = idx1;
+    //     }
+    //     if (load2 < leastload) {
+    //         leastload = load2;
+    //         selectedPort = idx2;
+    //     }
+    //     //std::cout <<"after "<< leastLoadInterface << leastLoad << std::endl;
+    //    // selectedPort = nexthops[rand() % nexthops.size()];
+    //     m_previousBestInterfaceMap[ch.dip] = selectedPort;
+    //     //std::cout <<"seq drill "<< ch.udp.seq/1000 << "choose " << selectedPort << std::endl;
+    // }
+    // return selectedPort;
 }
 
 /*------------------ConWeave Dummy ----------------*/

@@ -102,7 +102,7 @@ uint64_t RdmaQueuePair::GetBytesLeft() {
             }
         }
     }
-
+    //std::cout<< " nxt "<< snd_nxt <<std::endl;
     return m_size >= snd_nxt ? m_size - snd_nxt : 0;
 }
 
@@ -189,8 +189,8 @@ bool RdmaQueuePair::IsFinished() {
                 irn.m_sack.discardUpTo(snd_nxt);
             }
         }
-    }
-
+    }// sent but didn't receive ack so retrans
+    //std::cout <<"is finished nxt"<< snd_nxt << "una" << snd_una << std::endl;
     return snd_una >= m_size;
 }
 

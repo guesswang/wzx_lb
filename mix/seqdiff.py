@@ -43,7 +43,7 @@ def process_folder(folder_path):
     avg_max_diff = calculate_max_diff_average()
     return avg_max_diff  
 
-folders = ['output/ecmp', 'output/conweave', 'output/letflow', 'output/halflife', 'output/drill', 'output/wzx']
+folders = ['output/ecmp', 'output/letflow', 'output/drill', 'output/wzx']
 
 folder_names = []
 avg_max_diffs = []

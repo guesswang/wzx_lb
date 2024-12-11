@@ -104,7 +104,7 @@ Ptr<Packet> RdmaEgressQueue::DequeueQindex(int qIndex) {
 }
 int RdmaEgressQueue::GetNextQindex(bool paused[]) {
     bool found = false;
-    uint32_t qIndex;
+    uint32_t qIndex;//ack queue
     if (!paused[ack_q_idx] && m_ackQ->GetNPackets() > 0) return -1;
 
     // no pkt in highest priority queue, do rr for each qp
@@ -112,15 +112,17 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
     for (qIndex = 1; qIndex <= fcount; qIndex++) {
         if (m_qpGrp->IsQpFinished((qIndex + m_rrlast) % fcount)) continue;
         Ptr<RdmaQueuePair> qp = m_qpGrp->Get((qIndex + m_rrlast) % fcount);
-        bool cond1 = !paused[qp->m_pg];
+        bool cond1 = !paused[qp->m_pg];//unpaused
         bool cond_window_allowed =
             (!qp->IsWinBound() && (!qp->irn.m_enabled || qp->CanIrnTransmit(m_mtu)));
-        bool cond2 = (qp->GetBytesLeft() > 0 && cond_window_allowed);
+        bool cond2 = (qp->GetBytesLeft() > 0 && cond_window_allowed);// still have bytes left
 
         if (!cond2 && !m_qpGrp->IsQpFinished((qIndex + m_rrlast) % fcount)) {
             if (qp->IsFinishedConst()) {
                 m_qpGrp->SetQpFinished((qIndex + m_rrlast) % fcount);
+                //std::cout << "const " <<qp->sip<< std::endl;
             }
+            //std::cout << "!cond2 " <<qp->sip<< std::endl;
         }
         if (!cond1 && cond2) {
             if (m_qpGrp->Get((qIndex + m_rrlast) % fcount)->m_nextAvail.GetTimeStep() >
@@ -132,7 +134,7 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
                 if (!MAP_KEY_EXISTS(current_pause_time, flowid))
                     current_pause_time[flowid] = Simulator::Now();
             }
-        } else if (cond1 && cond2) {
+        } else if (cond1 && cond2) {//return qindex
             if (m_qpGrp->Get((qIndex + m_rrlast) % fcount)->m_nextAvail.GetTimeStep() >
                 Simulator::Now().GetTimeStep())  // not available now
                 continue;
@@ -147,6 +149,7 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
                     current_pause_time.erase(flowid);
                 }
             }
+            //std::cout <<qp->sip<<" left byte "<< qp->GetBytesLeft() << std::endl;
             return (qIndex + m_rrlast) % fcount;
         }
     }
@@ -259,7 +262,8 @@ void QbbNetDevice::DequeueAndTransmit(void) {
     Ptr<Packet> p;
     if (m_node->GetNodeType() == 0) {  // server
         int qIndex = m_rdmaEQ->GetNextQindex(m_paused);
-        if (qIndex != -1024) {
+        if (qIndex != -1024) { // valid index
+            //std::cout<< "qindex " <<qIndex<<std::endl;
             if (qIndex == -1) {  // high prio
                 p = m_rdmaEQ->DequeueQindex(qIndex);
                 m_traceDequeue(p, 0);

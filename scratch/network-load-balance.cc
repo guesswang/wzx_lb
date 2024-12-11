@@ -65,7 +65,7 @@ uint32_t conga_quantizeBit = 3;
 double conga_alpha = 0.2;
 
 // Letflow params
-Time letflow_flowletTimeout = MicroSeconds(100);  // 100us
+Time letflow_flowletTimeout = MicroSeconds(2000);  // 100us
 Time letflow_agingTime = MilliSeconds(2);  // just to clear the unused map entries for simul speed
 
 // Conweave params
@@ -261,7 +261,7 @@ void ScheduleFlowInputs(FILE *infile) {
 
             ApplicationContainer apps0s = server0.Install(n.Get(dst));  // DST
             apps0s.Start(Seconds(Time(0)));
-            apps0s.Stop(Seconds(100.0));
+            apps0s.Stop(Seconds(150.0));
         }  // end of logging input streams
 
         if (pairRtt.find(n.Get(src)) == pairRtt.end() ||
@@ -279,7 +279,7 @@ void ScheduleFlowInputs(FILE *infile) {
 
         ApplicationContainer appCon = clientHelper.Install(n.Get(src));  // SRC
         appCon.Start(Seconds(Time(0)));
-        appCon.Stop(Seconds(100.0));
+        appCon.Stop(Seconds(150.0));
 
         flow_input.idx++;
         ReadFlowInput();
@@ -1215,7 +1215,7 @@ int main(int argc, char *argv[]) {
         topof >> src >> dst >> data_rate >> link_delay >> error_rate;
 
         /** ASSUME: fixed one-hop delay across network */
-        assert(std::to_string(one_hop_delay) + "ns" == link_delay);
+        //assert(std::to_string(one_hop_delay) + "ns" == link_delay);
 
         link_pairs.push_back(std::make_pair(src, dst));
         Ptr<Node> snode = n.Get(src), dnode = n.Get(dst);
@@ -1794,7 +1794,7 @@ int main(int argc, char *argv[]) {
     NS_LOG_INFO("Run Simulation.");
     Simulator::Schedule(Seconds(flowgen_start_time),
                         &stop_simulation_middle);  // check every 100us
-    Simulator::Stop(Seconds(flowgen_stop_time + 10.0));
+    Simulator::Stop(Seconds(flowgen_stop_time + 100.0));
     Simulator::Run();
 
     /*-----------------------------------------------------------------------------*/

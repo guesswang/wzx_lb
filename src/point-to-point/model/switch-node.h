@@ -67,11 +67,10 @@ class SwitchNode : public Node {
     Ptr<SwitchMmu> m_mmu;
     bool m_isToR;                                 // true if ToR switch
     std::unordered_set<uint32_t> m_isToR_hostIP;  // host's IP connected to this ToR
-
+    static ns3::Time lastUpdate; // 用于记录上次更新最快路径的时间
     static TypeId GetTypeId(void);
     SwitchNode();
-    Time lastUpdate; // 用于记录上次更新最快路径的时间
-    std::vector<int> fastestNexthops; // 保存当前最快的三条路径
+    //static std::vector<int> fastestNexthops; // 保存当前最快的三条路径
     std::map<uint32_t, uint32_t> m_seqPortMap;
     void UpdateFastestPaths(const std::vector<int>& nexthops);
     void SetEcmpSeed(uint32_t seed);

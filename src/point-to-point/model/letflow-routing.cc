@@ -85,10 +85,11 @@ LetflowRouting::LetflowRouting() {
     m_switch_id = (uint32_t)-1;
 
     // set constants
-    m_flowletTimeout = Time(MicroSeconds(100));
+    m_flowletTimeout = Time(MicroSeconds(2000));
     m_agingTime = Time(MilliSeconds(10));
-}
 
+}
+    uint32_t changetimes=0;
 // it defines flowlet's 64bit key (order does not matter)
 uint64_t LetflowRouting::GetQpKey(uint32_t dip, uint16_t sport, uint16_t dport, uint32_t sip) {
     return ((uint64_t)sip << 32) | ((uint64_t)sport << 16) | (uint64_t)dip | (uint64_t)dport;
@@ -145,7 +146,7 @@ uint32_t LetflowRouting::RouteInput(Ptr<Packet> p, CustomHeader ch) {
             if (flowletItr != m_flowletTable.end()) {
                 flowlet = flowletItr->second;
                 NS_ASSERT_MSG(flowlet != NULL, "Impossible in normal cases - flowlet is not correctly registered");
-
+                //std::cout << "now " << now << " - " << " lastactive " <<flowlet->_activeTime << " timeout = " << now - flowlet->_activeTime<<std::endl;
                 if (now - flowlet->_activeTime <= m_flowletTimeout) {  // no timeout
                     // update flowlet info
                     flowlet->_activeTime = now;
@@ -163,13 +164,13 @@ uint32_t LetflowRouting::RouteInput(Ptr<Packet> p, CustomHeader ch) {
                                     << "Flowlet exists"
                                     << "Path/outPort" << selectedPath << outPort << now);
                     // if(m_switch_id == 128)
-                    //     std::cout<< "existed flowlet of flow "<< ch.sip 
-                    //         << "seq" << ch.udp.seq
-                    //         << "choose " << selectedPath 
-                    //         << "at time " <<Simulator::Now().GetNanoSeconds() << std::endl;
+                        // std::cout<< "existed flowlet of flow "<< ch.sip 
+                        //     << "seq" << ch.udp.seq
+                        //     << "choose " << selectedPath 
+                        //     << "at time " <<Simulator::Now().GetNanoSeconds() << std::endl;
                     return outPort;
                 }
-
+                std::cout << "timeout----------------" << std::endl;
                 /*---- Flowlet Timeout ----*/
                 // NS_LOG_FUNCTION("Flowlet expires, calculate the new port");
                 selectedPath = GetRandomPath(dstToRId);
@@ -192,10 +193,10 @@ uint32_t LetflowRouting::RouteInput(Ptr<Packet> p, CustomHeader ch) {
                                 << "Flowlet exists & Timeout"
                                 << "Path/outPort" << selectedPath << outPort << now);
                 // if(m_switch_id == 128)
-                //         std::cout<< "timeout flowlet of flow " <<ch.sip 
-                //             << "seq" << ch.udp.seq
-                //             << "choose " << selectedPath 
-                //             << "at time " <<Simulator::Now().GetNanoSeconds() << std::endl;                
+                        // std::cout<< "timeout flowlet of flow " <<ch.sip 
+                        //     << "seq" << ch.udp.seq
+                        //     << "choose " << selectedPath 
+                        //     << "at time " <<Simulator::Now().GetNanoSeconds() << std::endl;                
                 return GetOutPortFromPath(selectedPath, letflowTag.GetHopCount());
             }
             // 2) flowlet does not exist, e.g., first packet of flow
@@ -218,10 +219,10 @@ uint32_t LetflowRouting::RouteInput(Ptr<Packet> p, CustomHeader ch) {
                             << "Flowlet does not exist"
                             << "Path/outPort" << selectedPath << outPort << now);
             // if(m_switch_id == 128)
-            //             std::cout<< "new flowlet of flow " <<ch.sip 
-            //                 << "seq" << ch.udp.seq
-            //                 << "choose " << selectedPath 
-            //                 << "at time " <<Simulator::Now().GetNanoSeconds() << std::endl;
+                        std::cout<< "new flowlet of flow " <<ch.sip 
+                            << "seq" << ch.udp.seq
+                            << "choose " << selectedPath 
+                            << "at time " <<Simulator::Now().GetNanoSeconds() << std::endl;
             return GetOutPortFromPath(selectedPath, letflowTag.GetHopCount());
         }
         /*---- receiver-side ----*/
@@ -257,9 +258,17 @@ uint32_t LetflowRouting::RouteInput(Ptr<Packet> p, CustomHeader ch) {
 uint32_t LetflowRouting::GetRandomPath(uint32_t dstToRId) {
     auto pathItr = m_letflowRoutingTable.find(dstToRId);
     assert(pathItr != m_letflowRoutingTable.end());  // Cannot find dstToRId from ToLeafTable
-
     auto innerPathItr = pathItr->second.begin();
-    std::advance(innerPathItr, rand() % pathItr->second.size());
+    size_t randomIndex = rand() % std::min<size_t>(3, pathItr->second.size());
+    //std::cout << randomIndex <<std::endl;
+    if((randomIndex == 1) &&(changetimes<3)){
+        if(changetimes<2) randomIndex = 0;
+        else randomIndex = 2;
+        changetimes++;
+    }
+    std::advance(innerPathItr, randomIndex);
+    //std::advance(innerPathItr, rand() % pathItr->second.size());
+    //-----------------------get a random number, hash path size and send by advance
     return *innerPathItr;
 }
 
